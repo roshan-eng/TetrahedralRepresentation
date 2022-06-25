@@ -22,7 +22,19 @@ if __name__ == "__main__":
             for amino_index in range(len(chain)):
                 vertex_points = []
                 max_bond_length = 1
+
+                prev_residue = ['None']
                 residue = list(list(chain)[amino_index])
+                next_residue = ['None']
+
+                if amino_index > 0:
+                    prev_residue = list(list(chain)[amino_index - 1])
+
+                if amino_index < len(chain) - 1:
+                    next_residue = list(list(chain)[amino_index + 1])
+
+                if len(residue) <= 4:
+                    continue
 
                 if amino_index <= 0:
                     vertex_points.append(residue[0].get_coord())
@@ -38,6 +50,10 @@ if __name__ == "__main__":
                     vertex_points.append(elem / 2)
                     max_bond_length = np.linalg.norm(residue[1].get_coord() - elem / 2)
 
+                if max_bond_length > 2:
+                    continue
+
+                print(max_bond_length)
                 center = residue[1].get_coord()
                 c_beta_coord = residue[4].get_coord() - center
                 factor = max_bond_length / np.linalg.norm(c_beta_coord)
@@ -47,7 +63,7 @@ if __name__ == "__main__":
                 vertex_points.append(c_beta_coord)
                 vertex_points.append(center)
 
-                vertex = VertexCalc(*vertex_points, 10)
+                vertex = VertexCalc(*vertex_points, 30)
                 vertices = vertex.vertices()
                 face_index = vertex.face_indices(amino_count * 4)
                 outline_index = vertex.outline_indices(amino_count * 4)
@@ -61,7 +77,7 @@ if __name__ == "__main__":
 
                 for outline_elem in outline_index:
                     all_outline_indices.append(outline_elem)
-
+                    
     poly = Polyhedron()
     poly.vertices = np.zeros(amino_count * 4, [("a_position", np.float32, 3), ("a_color", np.float32, 4)])
     poly.vertices["a_position"] = all_vertex
