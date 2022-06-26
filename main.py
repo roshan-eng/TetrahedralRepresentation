@@ -10,7 +10,7 @@ if __name__ == "__main__":
 
     parser = PDB.PDBParser()
     io = PDB.PDBIO()
-    struct = parser.get_structure('1dn3', '/home/roshan/PycharmProjects/Chimera_Projects/1dn3.pdb')
+    struct = parser.get_structure('5nx2', '5nx2.pdb')
 
     all_vertex = []
     all_face_indices = []
