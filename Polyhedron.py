@@ -1,7 +1,3 @@
-# -----------------------------------------------------------------------------
-# Copyright (c) 2016 Nicolas P. All rights reserved.
-# Distributed under the (new) BSD License.
-# -----------------------------------------------------------------------------
 import sys
 import math
 import ctypes
@@ -11,6 +7,7 @@ import OpenGL.GLUT as glut
 from itertools import combinations
 
 
+# Class Polyhedron deals with opengl modelling
 class Polyhedron:
 
     def __init__(self):
@@ -43,8 +40,10 @@ class Polyhedron:
         self.phi_ = 0
         self.theta_ = 0
 
-        # Build cube
+        # Build Polyhedron
+        # Provide all the necessary inputs to build a polyhedron (Tetrahedron in our case)
         # --------------------------------------
+
         self.vertices = np.zeros(8, [("a_position", np.float32, 3),
                                      ("a_color", np.float32, 4)])
         self.vertices["a_position"] = [[1, 1, 1], [-1, 1, 1], [-1, -1, 1], [1, -1, 1],
@@ -102,7 +101,7 @@ class Polyhedron:
         gl.glDepthMask(gl.GL_TRUE)
         gl.glClear(gl.GL_COLOR_BUFFER_BIT | gl.GL_DEPTH_BUFFER_BIT)
 
-        # Filled cube
+        # Create Polyhedron using triangle mesh
         gl.glDisable(gl.GL_BLEND)
         gl.glEnable(gl.GL_DEPTH_TEST)
         gl.glEnable(gl.GL_POLYGON_OFFSET_FILL)
@@ -110,7 +109,7 @@ class Polyhedron:
         gl.glBindBuffer(gl.GL_ELEMENT_ARRAY_BUFFER, self.gpu["buffer"]["filled"])
         gl.glDrawElements(gl.GL_TRIANGLES, len(self.f_indices), gl.GL_UNSIGNED_INT, None)
 
-        # Outlined cube
+        # Outlined Model
         gl.glDisable(gl.GL_POLYGON_OFFSET_FILL)
         gl.glEnable(gl.GL_BLEND)
         gl.glDepthMask(gl.GL_FALSE)
@@ -119,7 +118,7 @@ class Polyhedron:
         gl.glDrawElements(gl.GL_LINES, len(self.o_indices), gl.GL_UNSIGNED_INT, None)
         gl.glDepthMask(gl.GL_TRUE)
 
-        # Rotate cube
+        # Rotate Model
         self.theta_ += 0.5  # degrees
         self.phi_ += 0.5  # degrees
 
@@ -232,20 +231,24 @@ class VertexCalc:
         self.point1 = np.array(point1)
         self.point2 = np.array(point2)
         self.point3 = np.array(point3)
-        self.center = np.array(center)
+        self.center = np.array(center) / reduce
         self.reduce = reduce
         self.points = None
 
+    # Provide the fourth H vertex along with all provided ones
     def vertices(self):
         self.points = [self.point1 / self.reduce, self.point2 / self.reduce, self.point3 / self.reduce,
-                       (4 * self.center - (self.point1 + self.point2 + self.point3)) / self.reduce]
+                       4 * self.center - (self.point1 + self.point2 + self.point3) / self.reduce]
 
+        # Return all the  four points needed for a tetrahedron
         return self.points
 
+    # Create a method to list all vertices in order that needed to create a face
     @staticmethod
     def face_indices(start_idx):
         return np.ravel(list(combinations(np.arange(start_idx, start_idx + 4), 3)))
 
+    # Create a method to list all vertices in order that needed to create an outline
     @staticmethod
     def outline_indices(start_idx):
         return np.ravel(list(combinations(np.arange(start_idx, start_idx + 4), 2)))
