@@ -13,7 +13,7 @@ if __name__ == "__main__":
     # Parse the PDB file
     parser = PDB.PDBParser()
     io = PDB.PDBIO()
-    struct = parser.get_structure('5nx2', '5nx2.pdb')       # Convert it into a struct format
+    struct = parser.get_structure('5nx2', 'PDB_DATA/5nx2.pdb')       # Convert it into a struct format
 
     all_vertex = []                                         # It will contain the viewing coordinates of all the atoms
     all_face_indices = []                                   # It will store the info of vertices to join to form a face
