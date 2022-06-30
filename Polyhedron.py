@@ -224,31 +224,3 @@ class Polyhedron:
         gl.glLineWidth(1.0)
         glut.glutMainLoop()
 
-
-class VertexCalc:
-
-    def __init__(self, point1=None, point2=None, point3=None, center=None, reduce=1):
-        self.point1 = np.array(point1)
-        self.point2 = np.array(point2)
-        self.point3 = np.array(point3)
-        self.center = np.array(center) / reduce
-        self.reduce = reduce
-        self.points = None
-
-    # Provide the fourth H vertex along with all provided ones
-    def vertices(self):
-        self.points = [self.point1 / self.reduce, self.point2 / self.reduce, self.point3 / self.reduce,
-                       4 * self.center - (self.point1 + self.point2 + self.point3) / self.reduce]
-
-        # Return all the  four points needed for a tetrahedron
-        return self.points
-
-    # Create a method to list all vertices in order that needed to create a face
-    @staticmethod
-    def face_indices(start_idx):
-        return np.ravel(list(combinations(np.arange(start_idx, start_idx + 4), 3)))
-
-    # Create a method to list all vertices in order that needed to create an outline
-    @staticmethod
-    def outline_indices(start_idx):
-        return np.ravel(list(combinations(np.arange(start_idx, start_idx + 4), 2)))
