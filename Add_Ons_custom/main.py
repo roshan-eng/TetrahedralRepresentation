@@ -11,6 +11,7 @@ from itertools import combinations
 from pathlib import Path
 import shutil
 import math
+import csv
 
 from chimerax.core.models import Model
 from chimerax.graphics import Drawing
@@ -82,6 +83,11 @@ def provide_model(struct, chain_ids=None, regular=False):
 
     amino_count = 0
     amino_skipped_count = 0  # The amino acids whose model were skipped
+    csv_data = []
+    fields = ['Index', 
+                'N-CO Distance', 'N-CB Distance', 'CO-CB Distance', 'CO-H Distance', 'CB-H Distance', 'N-H Distance',
+                'N-CO Model Length', 'N-CB Model Length', 'CO-CB Model Length', 'CO-H Model Length', 'CB-H Model Length', 'N-H Model Length',
+                'Average Model Length']
 
     for model in struct:
         for chain in model:
@@ -91,6 +97,9 @@ def provide_model(struct, chain_ids=None, regular=False):
                 continue
 
             prev_co_cord = None
+            csv_data.extend([[], [f"Chain: '{chain.get_id()}'"], []])
+            csv_data.append(fields)
+            csv_data.append([])
             for amino_index in range(len(chain)):
                 vertex_points = []
                 residue = list(list(chain)[amino_index])
@@ -172,8 +181,28 @@ def provide_model(struct, chain_ids=None, regular=False):
                 norm_c_beta_h = np.linalg.norm(c_beta_coord - h_cord)
                 norm_n_h = np.linalg.norm(n_cord - h_cord)
 
+                if len(residue) == 4:
+                    orinigal_cbeta = c_beta_coord
+                else:
+                    orinigal_cbeta = residue[4].get_coord()
+
+                vertices = [n_cord, co_cord, c_beta_coord, h_cord]
+                original_vertices = [residue[0].get_coord(), residue[2].get_coord(), orinigal_cbeta, vertices[-1]]
                 edges = [norm_co_n, norm_c_beta_n, norm_co_c_beta, norm_co_h, norm_c_beta_h, norm_n_h]
+                original_edges = [np.linalg.norm(original_vertices[0] - original_vertices[1]),
+                                    np.linalg.norm(original_vertices[0] - original_vertices[2]),
+                                    np.linalg.norm(original_vertices[1] - original_vertices[2]),
+                                    np.linalg.norm(original_vertices[1] - original_vertices[3]),
+                                    np.linalg.norm(original_vertices[2] - original_vertices[3]),
+                                    np.linalg.norm(original_vertices[0] - original_vertices[3])]
+
                 edge_length = sum(edges) / 6
+
+                face_index = VertexCalc().face_indices(amino_count * 4)
+                outline_index = VertexCalc().outline_indices(amino_count * 4)
+
+                amino_count += 1
+                all_face_indices.append(face_index)
                 # print(norm_co_n, norm_c_beta_n, norm_co_c_beta, norm_co_h, norm_c_beta_h, norm_n_h)
 
                 flag = False
@@ -183,40 +212,23 @@ def provide_model(struct, chain_ids=None, regular=False):
                 if flag:
                     continue
 
-                vertices = [n_cord, co_cord, c_beta_coord, h_cord]
-                original_vertices = [residue[0].get_coord(), residue[2].get_coord(), residue[4].get_coord(),
-                                     vertices[-1]]
-                face_index = VertexCalc().face_indices(amino_count * 4)
-                outline_index = VertexCalc().outline_indices(amino_count * 4)
-
-                amino_count += 1
-                all_face_indices.append(face_index)
+                all_vertex.extend(vertices)
+                all_original_vertex.extend(original_vertices)
+                all_outline_indices.extend(outline_index)
                 c_alpha_vertex.append(c_alpha_cord)
                 original_c_alpha_vertex.append((n_cord + co_cord + c_beta_coord + h_cord) / 4)
-
-                for vertex_elem in vertices:
-                    all_vertex.append(list(vertex_elem))
-
-                for original_vertex_elements in original_vertices:
-                    all_original_vertex.append(original_vertex_elements)
-
-                for outline_elem in outline_index:
-                    all_outline_indices.append(outline_elem)
-
-                # Store the distance between c_alpha_cord and other four atoms
-                for idx in range(4):
-                    dist = np.linalg.norm(vertices[idx] - c_alpha_cord)
-                    dist_from_c_alpha.append(dist)
+                csv_data.append([amino_index + 1, *original_edges, *edges, edge_length])
+                    
 
     all_vertex = np.array(all_vertex, np.float32)
     all_face_indices = np.array(all_face_indices, np.int32)
 
-    rmsd = lambda lst, org_lst, N: (sum(map(lambda x, y: (x - y) ** 2, lst, org_lst)) / N) ** 0.5
+    rmsd = lambda lst, org_lst, N: (sum(map(lambda x, y: np.linalg.norm(x - y) ** 2, lst, org_lst)) / N) ** 0.5
 
     RMSD_All = rmsd(all_vertex, all_original_vertex, amino_count)
     RMSD_CA = rmsd(c_alpha_vertex, original_c_alpha_vertex, amino_count)
 
-    return all_vertex, all_vertex, all_face_indices
+    return all_vertex, all_vertex, all_face_indices, RMSD_All, RMSD_CA, amino_count, csv_data
 
 
 def tetrahedron_model(pdb_name='1dn3', chain_ids=None, col=None, reg=False):
@@ -236,6 +248,10 @@ def tetrahedron_model(pdb_name='1dn3', chain_ids=None, col=None, reg=False):
     io = PDB.PDBIO()
     struct = parser.get_structure(str(pdb_name), Path(PDB_path) / native_pdb)
 
+    # Create a CSV file
+    filename = 'Desktop/model_result.csv'
+    path = os.environ["HOMEPATH"]
+
     # colors to use
     magenta = (255, 0, 255, 150)
     cyan = (0, 255, 255, 150)
@@ -254,15 +270,36 @@ def tetrahedron_model(pdb_name='1dn3', chain_ids=None, col=None, reg=False):
             for chain in model:
                 chain_ids.append(chain.get_id())
 
+    rmsd_all = 0
+    rmsd_CA = 0
+    count = 0
+    csv_data = []
     for i in range(len(chain_ids)):
-        va, na, ta = provide_model(struct, chain_ids[i], reg)
+        va, na, ta, RMSD_All, RMSD_CA, amino_count, data = provide_model(struct, chain_ids[i], reg)
         p = t.new_drawing(str(i))
         p.set_geometry(va, na, ta)
+
+        rmsd_all += (RMSD_All ** 2) * amino_count
+        rmsd_CA += (RMSD_CA ** 2) * amino_count
+        count += amino_count
+        csv_data.extend(data)
 
         if col is not None and i < len(col):
             p.set_color(np.array((col[i],), np.uint8))
 
         else:
             p.set_color(colors[i % len(colors)])
+
+    rmsd_all = (rmsd_all / count) ** 0.5
+    rmsd_CA = (rmsd_CA / count) ** 0.5
+    print("RMSD_ALL: ", rmsd_all, "\n", "RMSD_CA:", rmsd_CA)
+
+    with open(Path(path) / filename, 'w', newline='') as csv_file:
+        csv_writer = csv.writer(csv_file)
+        csv_writer.writerow(['RMSD_All', 'RMSD_CA'])
+        csv_writer.writerows([[rmsd_all, rmsd_CA], []])
+        csv_writer.writerows(csv_data)
+
+    print("Saved results to: ", Path(path)/filename)
 
     return t
