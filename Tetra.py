@@ -29,7 +29,7 @@ class Tetra:
         self.all_points = None
         self.session = session
         self.model_list = None
-        self.t = Model('m0', self.session)      # The Drawing for Protein Chain
+        self.t = Model('model_tetra', self.session)      # The Drawing for Protein Chain
         self.va = []                            # Matrix of all the points in forming Protein Chain Model with Tetrahedrons
         self.ta = []                            # Matrix of all the faces in forming Protein Chain Model with Tetrahedrons
         self.massing_vertices = []              # Matrix of all the faces in forming Protein Chain Massed Model with Tetrahedrons
@@ -165,23 +165,25 @@ class Tetra:
 
         # Remove the Protein Chain Model for the part needed to massed
         va = []
-        ta = []
-        amino = 0
         for i in chains:
-            va.extend(np.array(self.va[i], np.float32))
+            ta = []
+            amino = 0
+            va = np.array(self.va[i], np.float32)
 
             for a in self.va[i]:
                 e = amino * 12
                 ta.extend([[e, e + 3, e + 6], [e + 1, e + 7, e + 9], [e + 2, e + 4, e + 10], [e + 5, e + 8, e + 11]])
                 amino += 1
 
-        va = np.array(va, np.float64)
-        ta = np.array(ta, np.int32)
-        va = np.reshape(va, (va.shape[0] * va.shape[1], va.shape[2]))
+            sub_model = Model("chain" + chr(65 + i), self.session)
+            va = np.reshape(va, (va.shape[0] * va.shape[1], va.shape[2]))
+            ta = np.array(ta, np.int32)
+            va_norm = calculate_vertex_normals(va, ta)
+
+            sub_model.set_geometry(va, va_norm, ta)
+            self.t.add(sub_model)
 
         # Feed the matrix coordinates into the Drawing "t"
-        va_norm = calculate_vertex_normals(va, ta)
-        self.t.set_geometry(va, va_norm, ta)
         self.session.models.add([self.t])
 
     # Generate Massing
