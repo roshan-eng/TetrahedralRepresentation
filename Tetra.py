@@ -26,208 +26,242 @@ ht2 = 0.86602540378443864676372317075293618347140262690519031402790349
 class Tetra:
 
     def __init__(self, session):
-        self.all_points = None
-        self.session = session
-        self.model_list = None
-        self.t = Model('model_tetra', self.session)      # The Drawing for Protein Chain
-        self.va = []                            # Matrix of all the points in forming Protein Chain Model with Tetrahedrons
-        self.ta = []                            # Matrix of all the faces in forming Protein Chain Model with Tetrahedrons
-        self.massing_vertices = []              # Matrix of all the faces in forming Protein Chain Massed Model with Tetrahedrons
-        self.avg_edge_length = 0                # The final constant edge length of Tetrahedrons forming Protein Chain Model
 
-        self.model_list = self.session.models.list()    # All the protein models need to form the final Tetrahedron model
+        """
+        Initialize the Session, List of all the models in use, Edge-length of Tetrahedrons
+        and the arrays to store all the required vertices and faces.
+        """
+
+        self.session = session
+        self.model_list = self.session.models.list()
+        self.edge_length = 0
+        self.vertices = []
+        self.faces = []
+
+        # Remove the PseudoModels from the Model list as they have no Chain components.
         for model in self.model_list:
             try:
                 model.chains
             except AttributeError:
                 self.model_list.remove(model)
 
-    # Get the Final Constant Tetrahedron Edge Length as average of all CO-N Bond Length over all the present amino acids
-    def avg_length(self):
-        count = 0
+    """
+    Calculation of the required Edge-length of tetrahedrons to use as the average length of CO-N bonds
+    over the whole model to minimize the deviation from original vertices.
+    """
+    def calculate_edge_length(self):
+
+        amino_count = 0
         for model in self.model_list:
             for chain in model.chains:
                 for amino_index in range(len(chain.residues)):
+                    # If the residues is empty then continue. Likely the case of metal or water components.
                     if chain.residues[amino_index] is None:
                         continue
+
                     residue = chain.residues[amino_index].atoms
+
+                    # If the residue doesn't have C-alpha then it's not an amino acid, hence continue.
                     if 'CA' != residue.names[1]:
                         continue
+
+                    # Take the reference of original CO and N coordinates and deviate them to form a regular tetrahedron.
                     mid_N_point = residue[0].coord
                     mid_CO_point = residue[2].coord
+
+                    # Consider the mid-points of CO-N bonds as a vertex to form a continuous joined chains of tetrahedrons.
+                    # Condition check for edge cases of first and last amino acids in a chain.
                     if amino_index != 0 and chain.residues[amino_index - 1] is not None:
                         mid_N_point = (mid_N_point + chain.residues[amino_index - 1].atoms[2].coord) * 0.5
+
                     if amino_index != len(chain.residues) - 1 and chain.residues[amino_index + 1] is not None:
                         mid_CO_point = (mid_CO_point + chain.residues[amino_index + 1].atoms[0].coord) * 0.5
+
                     e = np.linalg.norm(mid_N_point - mid_CO_point)
-                    self.avg_edge_length += e
-                    count += 1
-            self.avg_edge_length /= count
+                    self.edge_length += e
+                    amino_count += 1
 
-    # Filling the self.va and self.ta matrix with required values using the protein amino acids
-    def provide_model(self, regular=True):
+            self.edge_length /= amino_count
+
+    """
+    Calculation of vertices that represents the complete Tetrahedron Structure.
+    The original coordinates were deviated from to form a regular Tetrahedron where the four edges of Tetrahedrons
+    represents the N, CO, CB and H respectively.
+    """
+    def calculate_vertices(self):
+
         amino_count = 0
-        amino_skipped_count = 0
-        c_alpha_vertex = []
-        all_original_vertex = []
-        original_c_alpha_vertex = []
-
         for model in self.model_list:
             for chain in model.chains:
                 chain_vertex = []
+                prev_CO_coordinate = None
 
-                prev_co_cord = None
-                for amino_index in range(len(chain.residues)):
-                    if chain.residues[amino_index] is None:
+                for index in range(len(chain.residues)):
+                    # If the residues is empty then continue. Likely the case of metal or water components.
+                    if chain.residues[index] is None:
                         continue
-                    vertex_points = []
-                    residue = chain.residues[amino_index].atoms
-                    n_cord = residue[0].coord
-                    co_cord = residue[2].coord
-                    if amino_index != 0 and chain.residues[amino_index - 1] is not None:
-                        if regular and prev_co_cord is not None:
-                            n_cord = prev_co_cord
+
+                    residue = chain.residues[index].atoms
+                    N_coordinate = residue[0].coord
+                    CO_coordinate = residue[2].coord
+
+                    # Consider the mid-points of CO-N bonds as a vertex to form a continuous joined chains of tetrahedrons.
+                    # Condition check for edge cases of first and last amino acids in a chain.
+                    if index != 0 and chain.residues[index - 1] is not None:
+                        if prev_CO_coordinate is not None:
+                            N_coordinate = prev_CO_coordinate
                         else:
-                            n_cord = (n_cord + chain.residues[amino_index - 1].atoms[2].coord) * 0.5
-                    if amino_index != len(chain.residues) - 1 and chain.residues[amino_index + 1] is not None:
-                        co_cord = (co_cord + chain.residues[amino_index + 1].atoms[0].coord) * 0.5
-                    co_n = n_cord - co_cord
-                    norm_co_n = np.linalg.norm(co_n)
-                    c_beta_coord = None
-                    c_alpha_cord = None
-                    if regular:
-                        co_n_dir = co_n / norm_co_n
-                        co_n = co_n_dir * self.avg_edge_length
-                        co_cord = n_cord - co_n
-                        norm_co_n = self.avg_edge_length
-                        prev_co_cord = co_cord
+                            N_coordinate = (N_coordinate + chain.residues[index - 1].atoms[2].coord) * 0.5
+
+                    if index != len(chain.residues) - 1 and chain.residues[index + 1] is not None:
+                        CO_coordinate = (CO_coordinate + chain.residues[index + 1].atoms[0].coord) * 0.5
+
+                    CO_N_vector = N_coordinate - CO_coordinate
+                    CO_N_normal = np.linalg.norm(CO_N_vector)
+
+                    CB_coordinate = None
+                    CA_coordinate = None
+
+                    # Coordinates for a regular Tetrahedron.
+                    CO_N_unit_vec = CO_N_vector / CO_N_normal
+                    CO_N_vector = CO_N_unit_vec * self.edge_length
+                    CO_coordinate = N_coordinate - CO_N_vector
+                    CO_N_normal = self.edge_length
+                    prev_CO_coordinate = CO_coordinate
+
+                    # If the residue doesn't have C-alpha then it's not an amino acid, hence continue.
                     if 'CA' != residue.names[1]:
-                        prev_co_cord = None
+                        prev_CO_coordinate = None
                         continue
+
+                    # Case of Glycine, with no CB coordinate.
                     if len(residue) == 4:
-                        c_alpha_cord = residue[1].coord
-                        mid_vec = n_cord - co_cord
-                        mid_point_vector = np.array([-1 / mid_vec[0], 1 / mid_vec[1], 0])
+                        CA_coordinate = residue[1].coord
+                        vector = N_coordinate - CO_coordinate
+                        move_vertical_CO_CB = np.array([-1 / vector[0], 1 / vector[1], 0])
+
                     elif len(residue) > 4:
-                        c_beta_coord = residue[4].coord
-                        c_alpha_cord = residue[1].coord
-                        co_c_beta = c_beta_coord - co_cord
-                        norm_co_c_beta = np.linalg.norm(co_c_beta)
-                        move_to_mid_line = (0.5 * norm_co_n - (np.dot(co_n, co_c_beta) / norm_co_n)) * (
-                                    co_n / norm_co_n)
-                        mid_point_vector = c_beta_coord + move_to_mid_line - (co_cord + n_cord) * 0.5
-                    mid_point_vector *= ht2 * norm_co_n / np.linalg.norm(mid_point_vector)
-                    c_beta_coord = (co_cord + n_cord) * 0.5 + mid_point_vector
-                    centroid = (c_beta_coord + co_cord + n_cord) / 3
-                    direction = np.cross((n_cord - co_cord), (c_beta_coord - co_cord))
-                    unit_dir = direction / np.linalg.norm(direction)
-                    # vec = c_alpha_cord - centroid
-                    # cos_theta = np.dot(unit_dir, vec) / np.linalg.norm(vec)
-                    # if cos_theta < 0:
-                    #     unit_dir *= -1
-                    H_vector = ht3 * norm_co_n * unit_dir
-                    h_cord = centroid + H_vector
-                    norm_c_beta_n = np.linalg.norm(c_beta_coord - n_cord)
-                    norm_co_c_beta = np.linalg.norm(co_cord - c_beta_coord)
-                    norm_co_h = np.linalg.norm(co_cord - h_cord)
-                    norm_c_beta_h = np.linalg.norm(c_beta_coord - h_cord)
-                    norm_n_h = np.linalg.norm(n_cord - h_cord)
-                    if len(residue) == 4:
-                        original_cb = c_beta_coord
-                    else:
-                        original_cb = residue[4].coord
-                    vertices = [n_cord, n_cord, n_cord, co_cord, co_cord, co_cord,
-                                c_beta_coord, c_beta_coord, c_beta_coord, h_cord, h_cord, h_cord]
-                    original_vertices = np.array([residue[0].coord, residue[2].coord, original_cb, vertices[-1]])
-                    edges = np.array([norm_co_n, norm_c_beta_n, norm_co_c_beta, norm_co_h, norm_c_beta_h, norm_n_h])
+                        CB_coordinate = residue[4].coord
+                        CA_coordinate = residue[1].coord
+                        CO_CB_vector = CB_coordinate - CO_coordinate
+                        CO_CB_normal = np.linalg.norm(CO_CB_vector)
+
+                        move_along_CO_CB = (0.5 * CO_N_normal - (np.dot(CO_N_vector, CO_CB_vector) / CO_N_normal)) * (
+                                    CO_N_vector / CO_N_normal)
+
+                        move_vertical_CO_CB = CB_coordinate + move_along_CO_CB - (CO_coordinate + N_coordinate) * 0.5
+
+                    move_vertical_CO_CB *= ht2 * CO_N_normal / np.linalg.norm(move_vertical_CO_CB)
+                    CB_coordinate = (CO_coordinate + N_coordinate) * 0.5 + move_vertical_CO_CB
+
+                    centroid_CO_CB_N = (CO_coordinate + CB_coordinate + N_coordinate) / 3
+                    H_direction = np.cross((N_coordinate - CO_coordinate), (CB_coordinate - CO_coordinate))
+
+                    H_unit_direction = H_direction / np.linalg.norm(H_direction)
+                    H_vector = ht3 * CO_N_normal * H_unit_direction
+                    H_coordinate = centroid_CO_CB_N + H_vector
+
+                    vertices = [N_coordinate, N_coordinate, N_coordinate, CO_coordinate, CO_coordinate, CO_coordinate,
+                                CB_coordinate, CB_coordinate, CB_coordinate, H_coordinate, H_coordinate, H_coordinate]
 
                     chain_vertex.append(vertices)
-                    c_alpha_vertex.append(c_alpha_cord)
-                    all_original_vertex.extend(original_vertices)
-                    original_c_alpha_vertex.append((n_cord + co_cord + c_beta_coord + h_cord) / 4)
                     amino_count += 1
 
                 chain_vertex = np.array(chain_vertex, np.float32)
-                self.va.append(chain_vertex)
+                self.vertices.append(chain_vertex)
 
-    # Function generating the Drawing with all the matrix points in self.va and self.ta
-    def tetrahedron_model(self, chains=False, pdb_name='1dn3', reg=True, seq=False):
+    """
+    A Function to create the Tetrahedron Models for each Chain components using the calculated vertices and faces.
+    This takes the coordinates of currently opened session and modify accordingly.
+    """
+    def tetrahedron_model(self, chains=False, seq=False):
+
+        # If chains are not given then the whole model will be a Tetrahedron Model.
         if not chains:
             i = 0
             chains = []
             for model in self.model_list:
-                for x in model.chains:
-                    chains.append(i)
+                for ch in model.chains:
+                    chains.append((i, ch))
                     i += 1
 
-        self.avg_length()
-        self.provide_model(reg)
+        self.calculate_edge_length()
+        self.calculate_vertices()
 
-        # Remove the Protein Chain Model for the part needed to massed
-        va = []
-        for i in chains:
+        # Remove the Protein Chain Model for the part needed to massed.
+        tetrahedron_model = Model('Tetrahedrons', self.session)
+        for (index, obj) in chains:
             ta = []
             amino = 0
-            va = np.array(self.va[i], np.float32)
+            va = np.array(self.vertices[index], np.float32)
 
-            for a in self.va[i]:
+            for a in self.vertices[index]:
                 e = amino * 12
                 ta.extend([[e, e + 3, e + 6], [e + 1, e + 7, e + 9], [e + 2, e + 4, e + 10], [e + 5, e + 8, e + 11]])
                 amino += 1
 
-            sub_model = Model("chain" + chr(65 + i), self.session)
+            # Create Sub-Models for each chain and add them to parent Tetrahedron Model.
+            sub_model = Model("Chain " + obj.chain_id, self.session)
             va = np.reshape(va, (va.shape[0] * va.shape[1], va.shape[2]))
             ta = np.array(ta, np.int32)
             va_norm = calculate_vertex_normals(va, ta)
 
             sub_model.set_geometry(va, va_norm, ta)
-            self.t.add(sub_model)
+            tetrahedron_model.add(sub_model)
 
-        # Feed the matrix coordinates into the Drawing "t"
-        self.session.models.add([self.t])
+        # Add the Tetrahedron Model to the running session.
+        self.session.models.add([tetrahedron_model])
 
-    # Generate Massing
-    # Unit is the time of edge length Tetrahedron to be used in reference to what is used in Protein Chain
-    def massing(self, chains=False, unit=1, refinement=1):
+    """
+    A Function to create the Massing Models for each Chain components using regular Tetrahedrons in a compact structure.
+    This takes the coordinates of currently opened session and modify accordingly.
+    
+    Chain takes the map of models and list of it's chains to be massed,
+    Unit defines the timesX the size of tetrahedrons edge length for massing tetrahedrons,
+    Alpha defines the compactness of the massing volume.
+    """
+    def massing(self, chains=False, unit=1, alpha=2):
+
+        # If chains not provided then create a Tetrahedron model of the whole session end the function.
         if not chains:
             self.tetrahedron_model()
             return
 
+        # Creating the list of indices of chains along with the chain objects to be and not to be massed.
         i = 0
         tetra_chains = []
         massing_chains = []
-        mass_chain_objects = []
         for model in self.model_list:
             for ch in model.chains:
                 if (model not in chains.keys()) and (ch.chain_id not in chains[model.name]):
-                    tetra_chains.append(i)
+                    tetra_chains.append((i, ch))
                 else:
-                    massing_chains.append(i)
-                    mass_chain_objects.append(ch)
+                    massing_chains.append((i, ch))
 
                 i += 1
 
-        print(tetra_chains)
-        print(massing_chains)
+        # Models and corresponding chains not to be massed will be represented in the Tetrahedron Model.
         self.tetrahedron_model(chains=tetra_chains)
+        massing_model = Model("Massing", self.session)
 
-        model_mass = Model("model_mass", self.session)                    # Drawing for massing Tetrahedron Model
-        for (index, ch) in zip(massing_chains, mass_chain_objects):
-            v = []
+        for (index, ch) in massing_chains:
+
+            # Collect all the coordinates to be considered inside massing volume.
+            mesh_vertices = []
             for amino in ch.residues:
                 if amino:
-                    v.extend(amino.atoms.coords)
+                    mesh_vertices.extend(amino.atoms.coords)
 
-            # Mesh Boundary Outer for Massing used for cases when to stop creating massing Tetrahedrons
-            mesh = alphashape.alphashape(v, refinement * 0.1)
+            # A mesh of covering the volume needed to be massed.
+            mesh = alphashape.alphashape(mesh_vertices, alpha * 0.1)
 
-            #  Function which becomes negative if the given coordinate is outside the Massing Boundary
+            # Function to define the position of a coordinate in respect to the created mesh.
             inside = lambda ms: trimesh.proximity.ProximityQuery(ms).signed_distance
-            count = 0
+            tetrahedron_count = 0
 
-            # Create the first tetrahedron
-            edge_length = self.avg_edge_length * unit
-            pt = self.va[index][0]
+            # Creating the First Tetrahedron for each Chain.
+            edge_length = self.edge_length * unit
+            pt = self.vertices[index][0]
 
             pt1 = pt[0]
             pt2 = pt[0] + (pt[3] - pt[0]) * edge_length / np.linalg.norm(pt[3] - pt[0])
@@ -235,27 +269,31 @@ class Tetra:
             pt4 = pt[0] + (pt[9] - pt[0]) * edge_length / np.linalg.norm(pt[9] - pt[0])
             centroid = (pt1 + pt2 + pt3 + pt4) / 4
 
-            self.massing_vertices = [[pt1, pt1, pt1, pt2, pt2, pt2, pt3, pt3, pt3, pt4, pt4, pt4]]
-            e = count * 12
-            faces = [[e, e + 3, e + 6], [e + 1, e + 7, e + 9], [e + 2, e + 4, e + 10], [e + 5, e + 8, e + 11]]
-            count += 1
+            idx = tetrahedron_count * 12
+            massing_vertices = [[pt1, pt1, pt1, pt2, pt2, pt2, pt3, pt3, pt3, pt4, pt4, pt4]]
+            faces = [[idx, idx + 3, idx + 6], [idx + 1, idx + 7, idx + 9], [idx + 2, idx + 4, idx + 10], [idx + 5, idx + 8, idx + 11]]
+            tetrahedron_count += 1
 
-            q = [[tuple(pt1), tuple(pt2), tuple(pt3), tuple(pt4)]]
+            # A queue to take instance of all the tetrahedrons to be grown outwards to fill the massing volume.
+            queue = [[tuple(pt1), tuple(pt2), tuple(pt3), tuple(pt4)]]
+
+            # A set to keep instance of all the tetrahedrons already created.
             visited = {tuple((int(centroid[0]), int(centroid[1]), int(centroid[2])))}
 
-            # Grow the Tetrahedrons using fixed set of equations to get the required pattern
+            # Grow the Tetrahedrons using a fixed set of equations to get the required pattern.
             depth = 10**5
-            while q:
+            while queue:
+
+                # A Forceful loop termination if exceeded the iteration limit.
                 if depth < 0:
-                    print("DEPTH EXCEEDED", len(q))
-                    break
+                    raise Exception("DEPTH EXCEEDED: " + len(queue))
                 depth -= 1
 
-                # Create new four tetrahedrons
-                prev_tetra = list(q.pop())
-                combine = combinations(prev_tetra, 3)
+                # Create new four tetrahedrons from the already created ones.
+                prev_tetrahedron = list(queue.pop())
+                combine = combinations(prev_tetrahedron, 3)
                 for p in combine:
-                    for x in prev_tetra:
+                    for x in prev_tetrahedron:
                         if x not in p:
                             p += (x,)
                             break
@@ -263,53 +301,50 @@ class Tetra:
                     pt1, pt2, pt3, pt4 = p
                     pt1, pt2, pt3, pt4 = np.array(pt1), np.array(pt2), np.array(pt3), np.array(pt4)
 
-                    # Set of equations to Generate the new tetrahedron from the previous one
+                    # Set of equations to Generate the new tetrahedron from the previous one.
                     p1 = (pt1 + pt2) / 2
                     p3 = p1 + (pt4 - pt3)
                     p2 = pt4 + (pt2 - pt1) / 2
                     p4 = pt4 + (pt1 - pt2) / 2
                     centroid = (p1 + p2 + p3 + p4) / 4
 
-                    #  Check if it's out of boundary
+                    # Check if it's out of boundary.
                     if inside(mesh)((centroid,)) < -3 * unit:
                         continue
 
-                    # Visited or Not
+                    # Check if Visited or Not.
                     t = tuple((int(centroid[0]), int(centroid[1]), int(centroid[2])))
                     if t not in visited:
-                        self.massing_vertices.append([p1, p1, p1, p2, p2, p2, p3, p3, p3, p4, p4, p4])
-                        e = count * 12
-                        faces.extend([[e, e + 3, e + 6], [e + 1, e + 7, e + 9], [e + 2, e + 4, e + 10], [e + 5, e + 8, e + 11]])
-                        count += 1
+                        idx = tetrahedron_count * 12
+                        massing_vertices.append([p1, p1, p1, p2, p2, p2, p3, p3, p3, p4, p4, p4])
+                        faces.extend([[idx, idx + 3, idx + 6], [idx + 1, idx + 7, idx + 9], [idx + 2, idx + 4, idx + 10], [idx + 5, idx + 8, idx + 11]])
+                        tetrahedron_count += 1
 
-                        q.append([tuple(p1), tuple(p2), tuple(p3), tuple(p4)])
+                        queue.append([tuple(p1), tuple(p2), tuple(p3), tuple(p4)])
                         visited.add(t)
 
-            # Refine the massing Tetras within the Boundary
+            # Refine the massing Tetrahedrons within the tight boundary.
             x = 0
-            while x < len(self.massing_vertices):
-                pt1, pt2, pt3, pt4 = self.massing_vertices[x][0], self.massing_vertices[x][3], \
-                                     self.massing_vertices[x][6], self.massing_vertices[x][9]
+            while x < len(massing_vertices):
+                pt1, pt2, pt3, pt4 = massing_vertices[x][0], massing_vertices[x][3], \
+                                     massing_vertices[x][6], massing_vertices[x][9]
                 centroid = (pt1 + pt2 + pt3 + pt4) / 4
+
                 if inside(mesh)((centroid,)) < 0:
-                    self.massing_vertices.pop(x)
+                    massing_vertices.pop(x)
                 else:
                     x += 1
 
-            # Refine the massing Tetras within the Boundary
-            mass_v = np.array(self.massing_vertices)
+            mass_v = np.array(massing_vertices)
             faces = np.array(faces[:len(mass_v) * 4], np.int32)
-            self.massing_vertices = np.reshape(mass_v, (mass_v.shape[0] * mass_v.shape[1], mass_v.shape[2]))
+            massing_vertices = np.reshape(mass_v, (mass_v.shape[0] * mass_v.shape[1], mass_v.shape[2]))
 
-            chainModel = Model("chain" + chr(65 + index), self.session)
-            '''
-            va_norm = calculate_vertex_normals(va, self.ta)
-            self.t.set_geometry(va, va_norm, self.ta)
-            self.session.models.add([self.t])
-            '''
+            # Create Sub-Models for each chain and add them to parent Massing Model.
+            chain_model = Model("Chain " + ch.chain_id, self.session)
 
-            mass_v_norm = calculate_vertex_normals(self.massing_vertices, faces)
-            chainModel.set_geometry(self.massing_vertices, mass_v_norm, faces)
-            model_mass.add([chainModel])
+            mass_v_norm = calculate_vertex_normals(massing_vertices, faces)
+            chain_model.set_geometry(massing_vertices, mass_v_norm, faces)
+            massing_model.add([chain_model])
 
-        self.session.models.add([model_mass])
+        # Add the Massing Model to the running session.
+        self.session.models.add([massing_model])
