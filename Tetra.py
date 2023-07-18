@@ -1,7 +1,3 @@
-"""
-Imported a Custom created class Polyhedron
-Import Numpy for handling arrays
-"""
 import bisect
 import os
 import numpy as np
@@ -12,11 +8,14 @@ from pathlib import Path
 import shutil
 import math
 
+from chimerax.core.commands import CmdDesc
 from chimerax.core.models import Model
 from chimerax.core.commands import run
 from chimerax.graphics import Drawing
 from chimerax.model_panel import tool
 from chimerax.surface import calculate_vertex_normals
+
+from chimerax.core.commands import ListOf, SetOf, TupleOf, Or, RepeatOf, BoolArg, IntArg
 
 # Constants
 ht3 = 0.81649658092772603273242802490196379732198249355222337614423086
@@ -33,17 +32,19 @@ class Tetra:
         """
 
         self.session = session
-        self.model_list = self.session.models.list()
+        self.model_list = []
         self.edge_length = 0
         self.vertices = []
         self.faces = []
 
         # Remove the PseudoModels from the Model list as they have no Chain components.
-        for model in self.model_list:
+        for model in self.session.models.list():
             try:
                 model.chains
             except AttributeError:
-                self.model_list.remove(model)
+                print("PesudoModels Found !!!")
+            else:
+                self.model_list.append(model)
 
     """
     Calculation of the required Edge-length of tetrahedrons to use as the average length of CO-N bonds
@@ -174,7 +175,7 @@ class Tetra:
     A Function to create the Tetrahedron Models for each Chain components using the calculated vertices and faces.
     This takes the coordinates of currently opened session and modify accordingly.
     """
-    def tetrahedron_model(self, chains=False, seq=False):
+    def tetrahedron(self, chains=False):
 
         # If chains are not given then the whole model will be a Tetrahedron Model.
         if not chains:
@@ -200,6 +201,9 @@ class Tetra:
                 ta.extend([[e, e + 3, e + 6], [e + 1, e + 7, e + 9], [e + 2, e + 4, e + 10], [e + 5, e + 8, e + 11]])
                 amino += 1
 
+            if (0 in va.shape):
+                continue
+
             # Create Sub-Models for each chain and add them to parent Tetrahedron Model.
             sub_model = Model("Chain " + obj.chain_id, self.session)
             va = np.reshape(va, (va.shape[0] * va.shape[1], va.shape[2]))
@@ -224,7 +228,7 @@ class Tetra:
 
         # If chains not provided then create a Tetrahedron model of the whole session end the function.
         if not chains:
-            self.tetrahedron_model()
+            self.tetrahedron()
             return
 
         # Creating the list of indices of chains along with the chain objects to be and not to be massed.
@@ -241,7 +245,7 @@ class Tetra:
                 i += 1
 
         # Models and corresponding chains not to be massed will be represented in the Tetrahedron Model.
-        self.tetrahedron_model(chains=tetra_chains)
+        self.tetrahedron(chains=tetra_chains)
         massing_model = Model("Massing", self.session)
 
         for (index, ch) in massing_chains:
@@ -330,7 +334,7 @@ class Tetra:
                                      massing_vertices[x][6], massing_vertices[x][9]
                 centroid = (pt1 + pt2 + pt3 + pt4) / 4
 
-                if inside(mesh)((centroid,)) < 0:
+                if inside(mesh)((centroid,)) < unit * 0.8:
                     massing_vertices.pop(x)
                 else:
                     x += 1
@@ -348,3 +352,15 @@ class Tetra:
 
         # Add the Massing Model to the running session.
         self.session.models.add([massing_model])
+
+
+# def tetrahedron(session, chains=False):
+#     tetra = Tetra(session)
+#     tetra.tetrahedron(chains = chains)
+
+def tetrahedron(session, chains=False, unit=1, alpha=2):
+    tetra = Tetra(session)
+    tetra.massing(chains = chains, unit = unit, alpha = alpha)
+
+# CmdDesc(required = [], optional=[("chains", SetOf)])
+tetrahedron_desc = CmdDesc(required = [], optional=[("chains", ListOf), ("unit", IntArg), ("alpha", IntArg)])
