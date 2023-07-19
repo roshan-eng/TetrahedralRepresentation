@@ -1,8 +1,6 @@
 import bisect
 import os
 import numpy as np
-import alphashape
-import trimesh
 from itertools import permutations, combinations
 from pathlib import Path
 import shutil
@@ -60,15 +58,20 @@ class Tetra:
                     if chain.residues[amino_index] is None:
                         continue
 
-                    residue = chain.residues[amino_index].atoms
+                    residue = chain.residues[amino_index]
 
-                    # If the residue doesn't have C-alpha then it's not an amino acid, hence continue.
-                    if 'CA' != residue.names[1]:
+                    # If the residue is not an amino acid skip it.
+                    if residue.polymer_type != residue.PT_AMINO:
                         continue
 
                     # Take the reference of original CO and N coordinates and deviate them to form a regular tetrahedron.
-                    mid_N_point = residue[0].coord
-                    mid_CO_point = residue[2].coord
+                    n_atom = residue.find_atom('N')
+                    co_atom = residue.find_atom('C')
+                    if n_atom is None or co_atom is None:
+                        continue
+
+                    mid_N_point = n_atom.coord
+                    mid_CO_point = co_atom.coord
 
                     # Consider the mid-points of CO-N bonds as a vertex to form a continuous joined chains of tetrahedrons.
                     # Condition check for edge cases of first and last amino acids in a chain.
@@ -102,9 +105,16 @@ class Tetra:
                     if chain.residues[index] is None:
                         continue
 
-                    residue = chain.residues[index].atoms
-                    N_coordinate = residue[0].coord
-                    CO_coordinate = residue[2].coord
+                    residue = chain.residues[index]
+                    resatoms = residue.atoms
+
+                    n_atom = residue.find_atom('N')
+                    co_atom = residue.find_atom('C')
+                    if n_atom is None or co_atom is None:
+                        continue
+
+                    N_coordinate = n_atom.coord
+                    CO_coordinate = co_atom.coord
 
                     # Consider the mid-points of CO-N bonds as a vertex to form a continuous joined chains of tetrahedrons.
                     # Condition check for edge cases of first and last amino acids in a chain.
@@ -130,20 +140,22 @@ class Tetra:
                     CO_N_normal = self.edge_length
                     prev_CO_coordinate = CO_coordinate
 
-                    # If the residue doesn't have C-alpha then it's not an amino acid, hence continue.
-                    if 'CA' != residue.names[1]:
+                    # If the residue is not an amino acid skip it.
+                    if residue.polymer_type != residue.PT_AMINO:
                         prev_CO_coordinate = None
                         continue
 
                     # Case of Glycine, with no CB coordinate.
-                    if len(residue) == 4:
-                        CA_coordinate = residue[1].coord
+                    ca_atom = residue.find_atom('CA')
+                    cb_atom = residue.find_atom('CB')
+                    if ca_atom is not None and cb_atom is None:
+                        CA_coordinate = ca_atom.coord
                         vector = N_coordinate - CO_coordinate
                         move_vertical_CO_CB = np.array([-1 / vector[0], 1 / vector[1], 0])
 
-                    elif len(residue) > 4:
-                        CB_coordinate = residue[4].coord
-                        CA_coordinate = residue[1].coord
+                    elif ca_atom is not None and cb_atom is not None:
+                        CB_coordinate = cb_atom.coord
+                        CA_coordinate = ca_atom.coord
                         CO_CB_vector = CB_coordinate - CO_coordinate
                         CO_CB_normal = np.linalg.norm(CO_CB_vector)
 
@@ -211,7 +223,7 @@ class Tetra:
             va_norm = calculate_vertex_normals(va, ta)
 
             sub_model.set_geometry(va, va_norm, ta)
-            tetrahedron_model.add(sub_model)
+            tetrahedron_model.add([sub_model])
 
         # Add the Tetrahedron Model to the running session.
         self.session.models.add([tetrahedron_model])
@@ -233,16 +245,24 @@ class Tetra:
 
         # Creating the list of indices of chains along with the chain objects to be and not to be massed.
         i = 0
+        # tetra_chains = []
+        # massing_chains = []
+        # for model in self.model_list:
+        #     for ch in model.chains:
+        #         if (model not in chains.keys()) and (ch.chain_id not in chains[model.name]):
+        #             tetra_chains.append((i, ch))
+        #         else:
+        #             massing_chains.append((i, ch))
+
         tetra_chains = []
         massing_chains = []
-        for model in self.model_list:
-            for ch in model.chains:
-                if (model not in chains.keys()) and (ch.chain_id not in chains[model.name]):
-                    tetra_chains.append((i, ch))
-                else:
-                    massing_chains.append((i, ch))
-
-                i += 1
+        model = self.model_list[0]
+        for ch in model.chains:
+            if ch.chain_id not in chains:
+                tetra_chains.append((i, ch))
+            else:
+                massing_chains.append((i, ch))
+            i += 1
 
         # Models and corresponding chains not to be massed will be represented in the Tetrahedron Model.
         self.tetrahedron(chains=tetra_chains)
@@ -257,9 +277,11 @@ class Tetra:
                     mesh_vertices.extend(amino.atoms.coords)
 
             # A mesh of covering the volume needed to be massed.
+            import alphashape
             mesh = alphashape.alphashape(mesh_vertices, alpha * 0.1)
 
             # Function to define the position of a coordinate in respect to the created mesh.
+            import trimesh
             inside = lambda ms: trimesh.proximity.ProximityQuery(ms).signed_distance
             tetrahedron_count = 0
 
@@ -354,13 +376,29 @@ class Tetra:
         self.session.models.add([massing_model])
 
 
-# def tetrahedron(session, chains=False):
-#     tetra = Tetra(session)
-#     tetra.tetrahedron(chains = chains)
+def tetrahedral_model(session, chains=False):
+    t = Tetra(session)
+    if chains:
+        chains = list(enumerate(chains))
+    t.tetrahedron(chains=chains)
 
-def tetrahedron(session, chains=False, unit=1, alpha=2):
-    tetra = Tetra(session)
-    tetra.massing(chains = chains, unit = unit, alpha = alpha)
+def massing_model(session, chains, unit=1, alpha=2):
+    t = Tetra(session)
+    chain_ids = [c.chain_id for c in chains]
+    t.massing(chains = chain_ids, unit = unit, alpha = alpha)
 
-# CmdDesc(required = [], optional=[("chains", SetOf)])
-tetrahedron_desc = CmdDesc(required = [], optional=[("chains", ListOf), ("unit", IntArg), ("alpha", IntArg)])
+def register_command(session):
+    from chimerax.core.commands import CmdDesc, register, ListOf, SetOf, TupleOf, RepeatOf, BoolArg, IntArg
+    from chimerax.atomic import UniqueChainsArg
+    t_desc = CmdDesc(required = [],
+                     optional=[("chains", UniqueChainsArg)],
+                     synopsis = 'creates tetrahedral model')
+    register('tetra', t_desc, tetrahedral_model, logger=session.logger)
+
+    m_desc = CmdDesc(required = [],
+                     optional=[("chains", UniqueChainsArg)],
+                     keyword=[("unit", IntArg), ("alpha", IntArg)],
+                     synopsis = 'create tetrahedral massing model')
+    register('massing', m_desc, massing_model, logger=session.logger)
+
+register_command(session)
