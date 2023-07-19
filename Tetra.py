@@ -377,12 +377,14 @@ class Tetra:
 
 
 def tetrahedral_model(session, chains=False):
+    #from Tetra import Tetra
     t = Tetra(session)
     if chains:
         chains = list(enumerate(chains))
     t.tetrahedron(chains=chains)
 
-def massing_model(session, chains, unit=1, alpha=2):
+def massing_model(session, chains=None, unit=1, alpha=2):
+    #from Tetra import Tetra
     t = Tetra(session)
     chain_ids = [c.chain_id for c in chains]
     t.massing(chains = chain_ids, unit = unit, alpha = alpha)
