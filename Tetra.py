@@ -19,7 +19,6 @@ from chimerax.core.commands import ListOf, SetOf, TupleOf, Or, RepeatOf, BoolArg
 ht3 = 0.81649658092772603273242802490196379732198249355222337614423086
 ht2 = 0.86602540378443864676372317075293618347140262690519031402790349
 
-
 class Tetra:
 
     def __init__(self, session):
@@ -245,18 +244,7 @@ class Tetra:
 
         # Creating the list of indices of chains along with the chain objects to be and not to be massed.
         i = 0
-        # tetra_chains = []
-        # massing_chains = []
-        # for model in self.model_list:
-        #     for ch in model.chains:
-        #         if (model not in chains.keys()) and (ch.chain_id not in chains[model.name]):
-        #             tetra_chains.append((i, ch))
-        #         else:
-        #             massing_chains.append((i, ch))
-
-        tetra_chains = []
-        massing_chains = []
-        model = self.model_list[0]
+        tetra_chains, massing_chains, model = [], [], self.model_list[0]
         for ch in model.chains:
             if ch.chain_id not in chains:
                 tetra_chains.append((i, ch))
@@ -317,13 +305,9 @@ class Tetra:
 
                 # Create new four tetrahedrons from the already created ones.
                 prev_tetrahedron = list(queue.pop())
-                combine = combinations(prev_tetrahedron, 3)
-                for p in combine:
-                    for x in prev_tetrahedron:
-                        if x not in p:
-                            p += (x,)
-                            break
+                combine = permutations(prev_tetrahedron)
 
+                for p in combine:
                     pt1, pt2, pt3, pt4 = p
                     pt1, pt2, pt3, pt4 = np.array(pt1), np.array(pt2), np.array(pt3), np.array(pt4)
 
@@ -334,13 +318,31 @@ class Tetra:
                     p4 = pt4 + (pt1 - pt2) / 2
                     centroid = (p1 + p2 + p3 + p4) / 4
 
-                    # Check if it's out of boundary.
-                    if inside(mesh)((centroid,)) < -3 * unit:
-                        continue
+                    pt12, pt23, pt34, pt13, pt24, pt14 = (p1 + p2) / 2, (p2 + p3) / 2, (p3 + p4) / 2, (p1 + p3) / 2, (p2 + p4) / 2, (p1 + p4) / 2
+                    pt12_a, pt12_b = pt12 + edge_length * (p1 - p2) / (4 * np.linalg.norm((p1 - p2))), pt12 - edge_length * (p1 - p2) / (4 * np.linalg.norm((p1 - p2)));
+                    pt23_a, pt23_b = pt23 + edge_length * (p2 - p3) / (4 * np.linalg.norm((p2 - p3))), pt23 - edge_length * (p2 - p3) / (4 * np.linalg.norm((p2 - p3)));
+                    pt34_a, pt34_b = pt34 + edge_length * (p3 - p4) / (4 * np.linalg.norm((p3 - p4))), pt34 - edge_length * (p3 - p4) / (4 * np.linalg.norm((p3 - p4)));
+                    pt13_a, pt13_b = pt13 + edge_length * (p1 - p3) / (4 * np.linalg.norm((p1 - p3))), pt13 - edge_length * (p1 - p3) / (4 * np.linalg.norm((p1 - p3)));
+                    pt24_a, pt24_b = pt24 + edge_length * (p2 - p4) / (4 * np.linalg.norm((p2 - p4))), pt24 - edge_length * (p2 - p4) / (4 * np.linalg.norm((p2 - p4)));
+                    pt14_a, pt14_b = pt14 + edge_length * (p1 - p4) / (4 * np.linalg.norm((p1 - p4))), pt14 - edge_length * (p1 - p4) / (4 * np.linalg.norm((p1 - p4)));
 
                     # Check if Visited or Not.
-                    t = tuple((int(centroid[0]), int(centroid[1]), int(centroid[2])))
-                    if t not in visited:
+                    t = tuple((round(centroid[0], 1), round(centroid[1], 1), round(centroid[2], 1)))
+                    t1_a, t1_b = tuple((round(pt12_a[0], 2), round(pt12_a[1], 2), round(pt12_a[2], 2))), tuple((round(pt12_b[0], 2), round(pt12_b[1], 2), round(pt12_b[2], 2)))
+                    t2_a, t2_b = tuple((round(pt23_a[0], 2), round(pt23_a[1], 2), round(pt23_a[2], 2))), tuple((round(pt23_b[0], 2), round(pt23_b[1], 2), round(pt23_b[2], 2)))
+                    t3_a, t3_b = tuple((round(pt34_a[0], 2), round(pt34_a[1], 2), round(pt34_a[2], 2))), tuple((round(pt34_b[0], 2), round(pt34_b[1], 2), round(pt34_b[2], 2)))
+                    t4_a, t4_b = tuple((round(pt13_a[0], 2), round(pt13_a[1], 2), round(pt13_a[2], 2))), tuple((round(pt13_b[0], 2), round(pt13_b[1], 2), round(pt13_b[2], 2)))
+                    t5_a, t5_b = tuple((round(pt24_a[0], 2), round(pt24_a[1], 2), round(pt24_a[2], 2))), tuple((round(pt24_b[0], 2), round(pt24_b[1], 2), round(pt24_b[2], 2)))
+                    t6_a, t6_b = tuple((round(pt14_a[0], 2), round(pt14_a[1], 2), round(pt14_a[2], 2))), tuple((round(pt14_b[0], 2), round(pt14_b[1], 2), round(pt14_b[2], 2)))
+
+                    c = t not in visited
+                    c1_a, c2_a, c3_a, c4_a, c5_a, c6_a = t1_a not in visited, t2_a not in visited, t3_a not in visited, t4_a not in visited, t5_a not in visited, t6_a not in visited
+                    c1_b, c2_b, c3_b, c4_b, c5_b, c6_b = t1_b not in visited, t2_b not in visited, t3_b not in visited, t4_b not in visited, t5_b not in visited, t6_b not in visited
+
+                    condition = c and c1_a and c2_a and c3_a and c4_a and c5_a and c6_a and c1_b and c2_b and c3_b and c4_b and c5_b and c6_b
+
+                    # Check if it's out of boundary.
+                    if condition and (inside(mesh)((centroid,)) > -3 * unit): 
                         idx = tetrahedron_count * 12
                         massing_vertices.append([p1, p1, p1, p2, p2, p2, p3, p3, p3, p4, p4, p4])
                         faces.extend([[idx, idx + 3, idx + 6], [idx + 1, idx + 7, idx + 9], [idx + 2, idx + 4, idx + 10], [idx + 5, idx + 8, idx + 11]])
@@ -348,6 +350,8 @@ class Tetra:
 
                         queue.append([tuple(p1), tuple(p2), tuple(p3), tuple(p4)])
                         visited.add(t)
+                        visited.add(t1_a), visited.add(t2_a), visited.add(t3_a), visited.add(t4_a), visited.add(t5_a), visited.add(t6_a)
+                        visited.add(t1_b), visited.add(t2_b), visited.add(t3_b), visited.add(t4_b), visited.add(t5_b), visited.add(t6_b) 
 
             # Refine the massing Tetrahedrons within the tight boundary.
             x = 0
