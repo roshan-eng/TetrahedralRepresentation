@@ -349,60 +349,70 @@ class Tetra:
 
         if sequence:
             cnt = 0
-            pt = None
-            mesh_vertices = []
+            mesh_vert_lt, mesh_vert, pts = [], [], []
             for lt in self.vertices:
-                for a in lt:
+                for i in range(len(lt)):
                     cnt += 1
-                    if (cnt == sequence[0]):
-                        pt = a
 
                     if sequence[0] <= cnt and cnt <= sequence[1]:
-                        mesh_vertices.extend([a[0], a[3], a[6], a[9]])
+                        mesh_vert.extend([lt[i][0], lt[i][3], lt[i][6], lt[i][9]])
+                        
+                        if i == 0 or cnt == sequence[0]:
+                            pts.append(lt[i])
+
+                        if i == len(lt) - 1 or cnt == sequence[1]:
+                            mesh_vert_lt.append(mesh_vert)
+                            mesh_vert = []
+
                     elif cnt > sequence[1]:
                         break
-
-            if not mesh_vertices:
-                raise Exception("Wrong Input Format !!!")
-
-            # A mesh of covering the volume needed to be massed.
-            import alphashape
-            mesh = alphashape.alphashape(mesh_vertices, alpha * 0.1)
-
-            tetrahedron_count = 0
 
             # Creating the First Tetrahedron for each Chain.
             edge_length = self.edge_length * unit
 
-            pt1 = pt[0]
-            pt2 = pt[0] + (pt[3] - pt[0]) * edge_length / np.linalg.norm(pt[3] - pt[0])
-            pt3 = pt[0] + (pt[6] - pt[0]) * edge_length / np.linalg.norm(pt[6] - pt[0])
-            pt4 = pt[0] + (pt[9] - pt[0]) * edge_length / np.linalg.norm(pt[9] - pt[0])
-            centroid = (pt1 + pt2 + pt3 + pt4) / 4
+            mass_id = 1
+            for pt, mv in zip(pts, mesh_vert_lt):
+                if not mv:
+                    print("Wrong Input Format !!!")
+                    continue
 
-            idx = tetrahedron_count * 12
-            massing_vertices = [[pt1, pt1, pt1, pt2, pt2, pt2, pt3, pt3, pt3, pt4, pt4, pt4]]
-            faces = [[idx, idx + 3, idx + 6], [idx + 1, idx + 7, idx + 9], [idx + 2, idx + 4, idx + 10], [idx + 5, idx + 8, idx + 11]]
-            tetrahedron_count += 1
+                # A mesh of covering the volume needed to be massed.
+                import alphashape
+                mesh = alphashape.alphashape(mv, alpha * 0.1)
+                tetrahedron_count = 0
 
-            # A queue to take instance of all the tetrahedrons to be grown outwards to fill the massing volume.
-            queue = [[tuple(pt1), tuple(pt2), tuple(pt3), tuple(pt4)]]
+                pt1 = pt[0]
+                pt2 = pt[0] + (pt[3] - pt[0]) * edge_length / np.linalg.norm(pt[3] - pt[0])
+                pt3 = pt[0] + (pt[6] - pt[0]) * edge_length / np.linalg.norm(pt[6] - pt[0])
+                pt4 = pt[0] + (pt[9] - pt[0]) * edge_length / np.linalg.norm(pt[9] - pt[0])
+                centroid = (pt1 + pt2 + pt3 + pt4) / 4
 
-            # A set to keep instance of all the tetrahedrons already created.
-            visited = {tuple((int(centroid[0]), int(centroid[1]), int(centroid[2])))}       
+                idx = tetrahedron_count * 12
+                massing_vertices = [[pt1, pt1, pt1, pt2, pt2, pt2, pt3, pt3, pt3, pt4, pt4, pt4]]
+                faces = [[idx, idx + 3, idx + 6], [idx + 1, idx + 7, idx + 9], [idx + 2, idx + 4, idx + 10], [idx + 5, idx + 8, idx + 11]]
+                tetrahedron_count += 1
 
-            massing_vertices, faces = self.grow(massing_vertices, faces, queue, visited, mesh, unit, tetrahedron_count, edge_length)
+                # A queue to take instance of all the tetrahedrons to be grown outwards to fill the massing volume.
+                queue = [[tuple(pt1), tuple(pt2), tuple(pt3), tuple(pt4)]]
 
-            mass_v = np.array(massing_vertices)
-            faces = np.array(faces[:len(mass_v) * 4], np.int32)
-            massing_vertices = np.reshape(mass_v, (mass_v.shape[0] * mass_v.shape[1], mass_v.shape[2]))
+                # A set to keep instance of all the tetrahedrons already created.
+                visited = {tuple((int(centroid[0]), int(centroid[1]), int(centroid[2])))}       
 
-            # Create Sub-Models for each chain and add them to parent Massing Model.
-            chain_model = Model("Chain", self.session)
+                massing_vertices, faces = self.grow(massing_vertices, faces, queue, visited, mesh, unit, tetrahedron_count, edge_length)
 
-            mass_v_norm = calculate_vertex_normals(massing_vertices, faces)
-            chain_model.set_geometry(massing_vertices, mass_v_norm, faces)
-            massing_model.add([chain_model])
+                mass_v = np.array(massing_vertices)
+                if not np.all(mass_v.shape) : continue
+
+                faces = np.array(faces[:len(mass_v) * 4], np.int32)
+                massing_vertices = np.reshape(mass_v, (mass_v.shape[0] * mass_v.shape[1], mass_v.shape[2]))
+
+                # Create Sub-Models for each chain and add them to parent Massing Model.
+                chain_model = Model("Chain" + str(mass_id), self.session)
+                mass_id += 1
+
+                mass_v_norm = calculate_vertex_normals(massing_vertices, faces)
+                chain_model.set_geometry(massing_vertices, mass_v_norm, faces)
+                massing_model.add([chain_model])
 
         else:
             # If chains not provided then create a Tetrahedron model of the whole session end the function.
