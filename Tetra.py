@@ -19,6 +19,43 @@ from chimerax.core.commands import ListOf, SetOf, TupleOf, Or, RepeatOf, BoolArg
 ht3 = 0.81649658092772603273242802490196379732198249355222337614423086
 ht2 = 0.86602540378443864676372317075293618347140262690519031402790349
 
+class Amino:
+    def __init__(self, og_coords, mod_coords, name, chain, index, obj):
+        self.c_alpha_og, self.c_beta_og, self.co_og, self.nh_og, self.h_og = og_coords
+        self.c_alpha, self.c_beta, self.co, self.nh, self.h = mod_coords
+        self.name, self.chain, self.index = name, chain, index
+        self.rmsd, self.rmsd_cen = None, None
+        self.e_len_og, e_len = None, None
+        self.obj = obj
+
+    @property
+    def rmsd_calpha(self):
+        if not self.rmsd_calpha: 
+            self.rmsd_calpha = np.sqrt(((np.linalg.norm(og_coords[0] - mod_coords[0])) ** 2).mean())
+        return self.rmsd_calpha
+
+    @property
+    def rmsd(self):
+        if not self.rmsd:
+            self.rmsd = np.sqrt((np.array([np.linalg.norm(p1 - p2) ** 2 for (p1, p2) in zip(og_coords, mod_coords)])).mean())
+        return self.rmsd
+
+    @property
+    def e_len_og(self):
+        if not e_len_og:
+            x = itertools.combinations(og_coords, 2)
+            self.e_len_og = np.array([np.linalg.norm(p1 - p2) for (p1, p2) in x]).mean()
+        return self.e_len_og
+
+    @property
+    def e_len(self):
+        if not e_len:
+            x = itertools.combinations(mod_coords, 2)
+            self.e_len_og = np.array([np.linalg.norm(p1 - p2) for (p1, p2) in x]).mean()
+        return self.e_len
+
+
+
 class Tetra:
 
     def __init__(self, session):
@@ -31,6 +68,7 @@ class Tetra:
         self.session = session
         self.model_list = []
         self.edge_length = 0
+        self.aminos = []
         self.vertices = []
         self.faces = []
 
@@ -173,6 +211,7 @@ class Tetra:
                     H_vector = ht3 * CO_N_normal * H_unit_direction
                     H_coordinate = centroid_CO_CB_N + H_vector
 
+                    # TODO : Create OG Coords and MOD Coords
                     vertices = [N_coordinate, N_coordinate, N_coordinate, CO_coordinate, CO_coordinate, CO_coordinate,
                                 CB_coordinate, CB_coordinate, CB_coordinate, H_coordinate, H_coordinate, H_coordinate]
 
@@ -181,6 +220,8 @@ class Tetra:
 
                 chain_vertex = np.array(chain_vertex, np.float32)
                 self.vertices.append(chain_vertex)
+
+                self.aminos.append(Amino())
 
     def grow(self, massing_vertices, faces, queue, visited, mesh, unit, tetrahedron_count, edge_length):
         # Function to define the position of a coordinate in respect to the created mesh.
