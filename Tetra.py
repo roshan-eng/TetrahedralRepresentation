@@ -20,10 +20,8 @@ ht3 = 0.81649658092772603273242802490196379732198249355222337614423086
 ht2 = 0.86602540378443864676372317075293618347140262690519031402790349
 
 class Amino:
-    def __init__(self, og_coords, mod_coords, name, chain, index, obj):
-        self.c_alpha_og, self.c_beta_og, self.co_og, self.nh_og, self.h_og = og_coords
-        self.c_alpha, self.c_beta, self.co, self.nh, self.h = mod_coords
-        self.name, self.chain, self.index = name, chain, index
+    def __init__(self, coords, obj):
+        self.nh, self.c_alpha, self.co, self.c_beta, self.h = coords
         self.rmsd, self.rmsd_cen = None, None
         self.e_len_og, e_len = None, None
         self.obj = obj
@@ -31,18 +29,24 @@ class Amino:
     @property
     def rmsd_calpha(self):
         if not self.rmsd_calpha: 
-            self.rmsd_calpha = np.sqrt(((np.linalg.norm(og_coords[0] - mod_coords[0])) ** 2).mean())
+            og_coords = [obj[x].coord for x in [0, 1, 2, 4]]
+            og_coords.append(self.h)
+            self.rmsd_calpha = np.sqrt(((np.linalg.norm(og_coords[0] - self.coords[0])) ** 2).mean())
         return self.rmsd_calpha
 
     @property
     def rmsd(self):
         if not self.rmsd:
-            self.rmsd = np.sqrt((np.array([np.linalg.norm(p1 - p2) ** 2 for (p1, p2) in zip(og_coords, mod_coords)])).mean())
+            og_coords = [obj[x].coord for x in [0, 1, 2, 4]]
+            og_coords.append(self.h)
+            self.rmsd = np.sqrt((np.array([np.linalg.norm(p1 - p2) ** 2 for (p1, p2) in zip(og_coords, self.coords)])).mean())
         return self.rmsd
 
     @property
     def e_len_og(self):
         if not e_len_og:
+            og_coords = [obj[x].coord for x in [0, 2, 4]]
+            og_coords.append(self.h)
             x = itertools.combinations(og_coords, 2)
             self.e_len_og = np.array([np.linalg.norm(p1 - p2) for (p1, p2) in x]).mean()
         return self.e_len_og
@@ -50,7 +54,7 @@ class Amino:
     @property
     def e_len(self):
         if not e_len:
-            x = itertools.combinations(mod_coords, 2)
+            x = itertools.combinations(self.coords[:1] + self.coords[2:], 2)
             self.e_len_og = np.array([np.linalg.norm(p1 - p2) for (p1, p2) in x]).mean()
         return self.e_len
 
@@ -66,11 +70,13 @@ class Tetra:
         """
 
         self.session = session
-        self.model_list = []
-        self.edge_length = 0
         self.aminos = []
         self.vertices = []
         self.faces = []
+
+        self.all_edge_lengths = np.array()
+        self.model_list = []
+        self.edge_length = 0
 
         # Remove the PseudoModels from the Model list as they have no Chain components.
         for model in self.session.models.list():
@@ -81,49 +87,44 @@ class Tetra:
             else:
                 self.model_list.append(model)
 
+    def regularize_egde_length(self, chain, res_index):
+
+        mid_N_point = chain.residues[res_index][0].coord
+        mid_CO_point = chain.residues[res_index][2].coord
+
+        # Consider the mid-points of CO-N bonds as a vertex to form a continuous joined chains of tetrahedrons.
+        # Condition check for edge cases of first and last amino acids in a chain.
+        if res_index != 0 and chain.residues[res_index - 1] is not None:
+            mid_N_point = (mid_N_point + chain.residues[res_index - 1].atoms[2].coord) * 0.5
+
+        if res_index != len(chain.residues) - 1 and chain.residues[res_index + 1] is not None:
+            mid_CO_point = (mid_CO_point + chain.residues[res_index + 1].atoms[0].coord) * 0.5
+
+        e = np.linalg.norm(mid_N_point - mid_CO_point)
+        self.all_edge_lengths = self.all_edge_lengths.append(e)
+        self.edge_length = self.all_edge_lengths.mean()
+
+
     """
     Calculation of the required Edge-length of tetrahedrons to use as the average length of CO-N bonds
     over the whole model to minimize the deviation from original vertices.
     """
-    def calculate_edge_length(self):
+    def iterate_aminos(self, execute=False):
 
-        amino_count = 0
         for model in self.model_list:
             for chain in model.chains:
-                for amino_index in range(len(chain.residues)):
-                    # If the residues is empty then continue. Likely the case of metal or water components.
-                    if chain.residues[amino_index] is None:
+                for res_index in range(len(chain.residues)):
+                    residue = chain.residues[res_index]
+
+                    # If the residue is none or not an amino acid skip it.
+                    if residue is None or residue.polymer_type != residue.PT_AMINO:
                         continue
 
-                    residue = chain.residues[amino_index]
-
-                    # If the residue is not an amino acid skip it.
-                    if residue.polymer_type != residue.PT_AMINO:
-                        continue
-
-                    # Take the reference of original CO and N coordinates and deviate them to form a regular tetrahedron.
-                    n_atom = residue.find_atom('N')
-                    co_atom = residue.find_atom('C')
-                    if n_atom is None or co_atom is None:
-                        continue
-
-                    mid_N_point = n_atom.coord
-                    mid_CO_point = co_atom.coord
-
-                    # Consider the mid-points of CO-N bonds as a vertex to form a continuous joined chains of tetrahedrons.
-                    # Condition check for edge cases of first and last amino acids in a chain.
-                    if amino_index != 0 and chain.residues[amino_index - 1] is not None:
-                        mid_N_point = (mid_N_point + chain.residues[amino_index - 1].atoms[2].coord) * 0.5
-
-                    if amino_index != len(chain.residues) - 1 and chain.residues[amino_index + 1] is not None:
-                        mid_CO_point = (mid_CO_point + chain.residues[amino_index + 1].atoms[0].coord) * 0.5
-
-                    e = np.linalg.norm(mid_N_point - mid_CO_point)
-                    self.edge_length += e
-                    amino_count += 1
-
-            self.edge_length /= amino_count
-
+                    if execute:
+                        # TODO : Implement the calcuate vertices method
+                        pass
+                    else:
+                        self.regularize_egde_length(chain, res_index)
     """
     Calculation of vertices that represents the complete Tetrahedron Structure.
     The original coordinates were deviated from to form a regular Tetrahedron where the four edges of Tetrahedrons
@@ -145,8 +146,8 @@ class Tetra:
                     residue = chain.residues[index]
                     resatoms = residue.atoms
 
-                    n_atom = residue.find_atom('N')
-                    co_atom = residue.find_atom('C')
+                    n_atom = residue[0]
+                    co_atom = residue[2]
                     if n_atom is None or co_atom is None:
                         continue
 
@@ -183,8 +184,8 @@ class Tetra:
                         continue
 
                     # Case of Glycine, with no CB coordinate.
-                    ca_atom = residue.find_atom('CA')
-                    cb_atom = residue.find_atom('CB')
+                    ca_atom = residue[1]
+                    cb_atom = residue[4]
                     if ca_atom is not None and cb_atom is None:
                         CA_coordinate = ca_atom.coord
                         vector = N_coordinate - CO_coordinate
