@@ -22,54 +22,78 @@ ht2 = 0.86602540378443864676372317075293618347140262690519031402790349
 class Amino:
     def __init__(self, coords, obj):
         self.nh, self.c_alpha, self.co, self.c_beta, self.h = coords
-        self.rmsd, self.rmsd_cen = None, None
-        self.e_len_og, e_len = None, None
-        self.obj = obj
+        self._model_coords = [self.nh, self.nh, self.nh, self.co, self.co, self.co, self.c_beta, self.c_beta, self.c_beta, self.h, self.h, self.h]
+        self._rmsd_calpha, self._rmsd = None, None
+        self._e_len_og, _e_len = None, None
+        self.obj, self.coords = obj, coords
+
+    @property
+    def model_coords(self):
+        return self._model_coords
+    
+    @model_coords.setter
+    def model_coords(self, coords):
+        self._model_coords = coords
 
     @property
     def rmsd_calpha(self):
-        if not self.rmsd_calpha: 
-            self.rmsd_calpha = np.sqrt(((np.linalg.norm(obj[1].coord - self.coords[1])) ** 2).mean())
+        if not self._rmsd_calpha: 
+            self._rmsd_calpha = np.sqrt(((np.linalg.norm(self.obj.atoms[1].coord - self.coords[1])) ** 2).mean())
 
-        return self.rmsd_calpha
+        return self._rmsd_calpha
+
+    @rmsd_calpha.setter
+    def rmsd_calpha(self, val):
+        self._rmsd_calpha = val
 
     @property
     def rmsd(self):
-        if not self.rmsd:
-            og_coords = [obj[x].coord for x in [0, 1, 2]]
-            if (obj.name == 'GLY'):
+        if not self._rmsd:
+            og_coords = [self.obj.atoms[x].coord for x in [0, 1, 2]]
+            if (self.obj.name == 'GLY'):
                 og_coords.append(self.c_beta)
             else:
-                og_coords.append(obj[4].coord)
+                og_coords.append(self.obj.atoms[4].coord)
 
             og_coords.append(self.h)
-            self.rmsd = np.sqrt((np.array([np.linalg.norm(p1 - p2) ** 2 for (p1, p2) in zip(og_coords, self.coords)])).mean())
+            self._rmsd = np.sqrt((np.array([np.linalg.norm(p1 - p2) ** 2 for (p1, p2) in zip(og_coords, self.coords)])).mean())
 
-        return self.rmsd
+        return self._rmsd
+
+    @rmsd.setter
+    def rmsd(self, val):
+        self._rmsd = val
 
     @property
     def e_len_og(self):
-        if not e_len_og:
-            og_coords = [obj[x].coord for x in [0, 2]]
-            if (obj.name == 'GLY'):
+        if not self._e_len_og:
+            og_coords = [self.obj.atoms[x].coord for x in [0, 2]]
+            if (self.obj.name == 'GLY'):
                 og_coords.append(self.c_beta)
             else:
-                og_coords.append(obj[4].coord)
+                og_coords.append(self.obj.atoms[4].coord)
 
             og_coords.append(self.h)
             x = itertools.combinations(og_coords, 2)
-            self.e_len_og = np.array([np.linalg.norm(p1 - p2) for (p1, p2) in x]).mean()
+            self._e_len_og = np.array([np.linalg.norm(p1 - p2) for (p1, p2) in x]).mean()
 
-        return self.e_len_og
+        return self._e_len_og
+
+    @e_len_og.setter
+    def e_len_og(self, val):
+        self._e_len_og = val
 
     @property
     def e_len(self):
-        if not e_len:
+        if not self._e_len:
             x = itertools.combinations(self.coords[:1] + self.coords[2:], 2)
-            self.e_len_og = np.array([np.linalg.norm(p1 - p2) for (p1, p2) in x]).mean()
+            self._e_len = np.array([np.linalg.norm(p1 - p2) for (p1, p2) in x]).mean()
 
-        return self.e_len
+        return self._e_len
 
+    @e_len.setter
+    def e_len(self, val):
+        self._e_len = val
 
 class Tetra:
 
@@ -86,8 +110,8 @@ class Tetra:
 
         self.all_edge_lengths = []
         self.chain_elements = []
-        self.model_list = []
-        self.aminos = []
+        self.model_list = {}
+        self.protein = {}
 
         self.edge_length = None
 
@@ -98,12 +122,12 @@ class Tetra:
             except AttributeError:
                 print("PesudoModels Found !!!")
             else:
-                self.model_list.append(model)
+                self.model_list[model.id] = model
 
     def regularize_egde_length(self, chain, res_index):
 
-        mid_N_point = chain.residues[res_index][0].coord
-        mid_CO_point = chain.residues[res_index][2].coord
+        mid_N_point = chain.residues[res_index].atoms[0].coord
+        mid_CO_point = chain.residues[res_index].atoms[2].coord
 
         # Consider the mid-points of CO-N bonds as a vertex to form a continuous joined chains of tetrahedrons.
         # Condition check for edge cases of first and last amino acids in a chain.
@@ -119,42 +143,44 @@ class Tetra:
 
     def process_coordinates(self, chain, res_index, is_continuous_chain):
 
-        N_coordinate = chain.residues[res_index][0].coord
-        CO_coordinate = chain.residues[res_index][2].coord
+        N_coordinate = chain.residues[res_index].atoms[0].coord
+        CO_coordinate = chain.residues[res_index].atoms[2].coord
 
         # Consider the mid-points of CO-N bonds as a vertex to form a continuous joined chains of tetrahedrons.
         # Condition check for edge cases of first and last amino acids in a chain.
-        if res_index != 0 and is_continuous_chain:
-            N_coordinate = self.chain_elements[-1].co
+        if res_index != 0 and chain.residues[res_index - 1] is not None:
+            if is_continuous_chain:
+                N_coordinate = self.chain_elements[-1].co
+            else:
+                N_coordinate = (N_coordinate + chain.residues[res_index - 1].atoms[2].coord) * 0.5
 
-        if res_index != len(chain.residues) - 1 and chain.residues[res_index + 1] is not None:
+        if res_index < len(chain.residues) - 1 and chain.residues[res_index + 1]:
             CO_coordinate = (CO_coordinate + chain.residues[res_index + 1].atoms[0].coord) * 0.5
 
         # Coordinates for a regular Tetrahedron.
-        N_CO_vector = CO_coordinate - N_coordinate
-        CO_coordinate = N_coordinate + (N_CO_vector) * self.edge_length / np.linalg.norm(N_CO_vector)
+        CO_coordinate = N_coordinate - (N_coordinate - CO_coordinate) * self.edge_length / np.linalg.norm(N_coordinate - CO_coordinate)
+        CO_N_vector = N_coordinate - CO_coordinate
 
         # Case of Glycine, with no CB coordinate.
-        if chain.residues[res_index].name == 'GLY':
-            CA_coordinate = chain.residues[res_index][1].coord
+        if len(chain.residues[res_index].atoms) <= 4:
+            CA_coordinate = chain.residues[res_index].atoms[1].coord
             vector = N_coordinate - CO_coordinate
-            move_CO_CB_orthogonal = np.array([-1 / vector[0], 1 / vector[1], 0])
-
+            move_vertical_CO_CB = np.array([-1 / vector[0], 1 / vector[1], 0])
         else:
-            CB_coordinate = chain.residues[res_index][4].coord
-            CA_coordinate = chain.residues[res_index][1].coord
+            CA_coordinate = chain.residues[res_index].atoms[1].coord
+            CB_coordinate = chain.residues[res_index].atoms[4].coord
+            move_along_CO_CB = (0.5 * self.edge_length - (np.dot(CO_N_vector, (CB_coordinate - CO_coordinate)) / self.edge_length)) * (CO_N_vector / self.edge_length)
+            move_vertical_CO_CB = CB_coordinate + move_along_CO_CB - (CO_coordinate + N_coordinate) * 0.5
 
-            move_CO_CB = (0.5 * self.edge_length - (np.dot(N_CO_vector, CB_coordinate - CO_coordinate) / self.edge_length)) * (N_CO_vector / self.edge_length)
-            move_CO_CB_orthogonal = CB_coordinate + move_CO_CB - (CO_coordinate + N_coordinate) * 0.5
-
-        move_CO_CB_orthogonal *= ht2 * self.edge_length / np.linalg.norm(move_CO_CB_orthogonal)
-        CB_coordinate = (CO_coordinate + N_coordinate) * 0.5 + move_CO_CB_orthogonal
+        move_vertical_CO_CB *= ht2 * self.edge_length / np.linalg.norm(move_vertical_CO_CB)
+        CB_coordinate = (CO_coordinate + N_coordinate) * 0.5 + move_vertical_CO_CB
 
         H_direction = np.cross((N_coordinate - CO_coordinate), (CB_coordinate - CO_coordinate))
-        H_vector = ht3 * H_direction * self.edge_length / np.linalg.norm(H_direction)
+        H_vector = ht3 * self.edge_length * H_direction / np.linalg.norm(H_direction)
         H_coordinate = (CO_coordinate + CB_coordinate + N_coordinate) / 3 + H_vector
 
-        vertices = [N_coordinate, CO_coordinate, CB_coordinate, H_coordinate]
+        vertices = [N_coordinate, (N_coordinate + CO_coordinate + CB_coordinate + H_coordinate) / 4, CO_coordinate, CB_coordinate, H_coordinate]
+
         self.chain_elements.append(Amino(vertices, chain.residues[res_index]))
 
     """
@@ -163,31 +189,30 @@ class Tetra:
     """
     def iterate_aminos(self, execute=False):
 
-        for model in self.model_list:
+        for model in self.model_list.values():
             for chain in model.chains:
                 is_continuous_chain = False
                 for res_index in range(len(chain.residues)):
 
-                    if residue is None or residue.polymer_type != residue.PT_AMINO:
+                    residue = chain.residues[res_index]
+                    if not residue or residue.polymer_type != residue.PT_AMINO or not residue.find_atom('CA'):
                         is_continuous_chain = False
                         continue
 
                     if execute:
-                        process_coordinates(chain, res_index, is_continuous_chain)
+                        self.process_coordinates(chain, res_index, is_continuous_chain)
                         is_continuous_chain = True
                     else:
                         self.regularize_egde_length(chain, res_index)
 
                 if execute:
-                    self.aminos.append(self.chain_elements)
+                    self.protein[chain.chain_id] = self.chain_elements
                     self.chain_elements = []
     """
     Calculation of vertices that represents the complete Tetrahedron Structure.
     The original coordinates were deviated from to form a regular Tetrahedron where the four edges of Tetrahedrons
     represents the N, CO, CB and H respectively.
     """
-                    
-
     def grow(self, massing_vertices, faces, queue, visited, mesh, unit, tetrahedron_count, edge_length):
         # Function to define the position of a coordinate in respect to the created mesh.
         import trimesh
@@ -277,63 +302,53 @@ class Tetra:
     """
     def tetrahedron(self, sequence=False, chains=False):
         tetrahedron_model = Model('Tetrahedrons', self.session)
+        self.iterate_aminos()
+        self.iterate_aminos(execute=True)
 
         if sequence:
-            amino, cnt = 0, 0
-            va, ta = [], []
-            for lt in self.vertices:
-                for a in lt:
-                    cnt += 1
-                    if not (sequence[0] <= cnt and cnt <= sequence[1]):
-                        e = amino * 12
-                        ta.extend([[e, e + 3, e + 6], [e + 1, e + 7, e + 9], [e + 2, e + 4, e + 10], [e + 5, e + 8, e + 11]])
-                        va.append(a)
-                        amino += 1
+            for chain in self.protein.values():
+                va, ta, x = [], [], 0
+                for am in chain:
+                    if sequence[0] <= am.obj.number and am.obj.number < sequence[1]:
+                        ta.extend([[12*x, 12*x + 3, 12*x + 6], [12*x + 1, 12*x + 7, 12*x + 9], [12*x + 2, 12*x + 4, 12*x + 10], [12*x + 5, 12*x + 8, 12*x + 11]])
+                        va.append(am.model_coords)
+                        x += 1
 
-            va = np.array(va, np.float32)
+                va = np.array(va, np.float32)
+                if 0 not in va.shape:
+                    # Create Sub-Models for each chain and add them to parent Tetrahedron Model.
+                    sub_model = Model("Chain " + chain[0].obj.chain_id + " (SEQ)", self.session)
+                    va = np.reshape(va, (va.shape[0] * va.shape[1], va.shape[2]))
+                    ta = np.array(ta, np.int32)
+                    va_norm = calculate_vertex_normals(va, ta)
 
-            if 0 not in va.shape:
-                # Create Sub-Models for each chain and add them to parent Tetrahedron Model.
-                sub_model = Model("Chain", self.session)
-                va = np.reshape(va, (va.shape[0] * va.shape[1], va.shape[2]))
-                ta = np.array(ta, np.int32)
-                va_norm = calculate_vertex_normals(va, ta)
-
-                sub_model.set_geometry(va, va_norm, ta)
-                tetrahedron_model.add([sub_model])
+                    sub_model.set_geometry(va, va_norm, ta)
+                    tetrahedron_model.add([sub_model])
 
         else:
             # If chains are not given then the whole model will be a Tetrahedron Model.
             if not chains:
-                i = 0
                 chains = []
-                for model in self.model_list:
+                for model in self.model_list.values():
                     for ch in model.chains:
-                        chains.append((i, ch))
-                        i += 1
+                        chains.append(ch.chain_id)
 
             # Remove the Protein Chain Model for the part needed to massed.
-            for (index, obj) in chains:
-                ta = []
-                amino = 0
-                va = np.array(self.vertices[index], np.float32)
+            for ids in chains:
+                va, ta = np.array([am.model_coords for am in self.protein[ids]], np.float32), []
 
-                for a in self.vertices[index]:
-                    e = amino * 12
-                    ta.extend([[e, e + 3, e + 6], [e + 1, e + 7, e + 9], [e + 2, e + 4, e + 10], [e + 5, e + 8, e + 11]])
-                    amino += 1
+                for x in range(len(self.protein[ids])):
+                    ta.extend([[12*x, 12*x + 3, 12*x + 6], [12*x + 1, 12*x + 7, 12*x + 9], [12*x + 2, 12*x + 4, 12*x + 10], [12*x + 5, 12*x + 8, 12*x + 11]])
 
-                if 0 in va.shape:
-                    continue
+                if 0 not in va.shape:
+                    # Create Sub-Models for each chain and add them to parent Tetrahedron Model.
+                    sub_model = Model("Chain " + ids, self.session)
+                    va = np.reshape(va, (va.shape[0] * va.shape[1], va.shape[2]))
+                    ta = np.array(ta, np.int32)
+                    va_norm = calculate_vertex_normals(va, ta)
 
-                # Create Sub-Models for each chain and add them to parent Tetrahedron Model.
-                sub_model = Model("Chain " + obj.chain_id, self.session)
-                va = np.reshape(va, (va.shape[0] * va.shape[1], va.shape[2]))
-                ta = np.array(ta, np.int32)
-                va_norm = calculate_vertex_normals(va, ta)
-
-                sub_model.set_geometry(va, va_norm, ta)
-                tetrahedron_model.add([sub_model])
+                    sub_model.set_geometry(va, va_norm, ta)
+                    tetrahedron_model.add([sub_model])
 
         # Add the Tetrahedron Model to the running session.
         self.session.models.add([tetrahedron_model])
@@ -349,8 +364,6 @@ class Tetra:
     def massing(self, sequence=False, chains=False, unit=1, alpha=2):
 
         massing_model = Model("Massing", self.session)
-        self.calculate_edge_length()
-        self.calculate_vertices()
         self.tetrahedron(sequence)
 
         if sequence:
@@ -428,7 +441,7 @@ class Tetra:
 
             # Creating the list of indices of chains along with the chain objects to be and not to be massed.
             i = 0
-            tetra_chains, massing_chains, model = [], [], self.model_list[0]
+            tetra_chains, massing_chains, model = [], [], self.model_list.values()[0]
             for ch in model.chains:
                 if ch.chain_id not in chains:
                     tetra_chains.append((i, ch))
