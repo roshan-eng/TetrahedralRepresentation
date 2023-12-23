@@ -1,5 +1,5 @@
-import alphashape
 import numpy as np
+import alphashape, trimesh
 from itertools import permutations, combinations
 
 from chimerax.core.commands import CmdDesc
@@ -91,9 +91,10 @@ class Tetra:
 
     def __init__(self, session):
 
-        self.all_edge_lengths, self.chain_elements = [], []
-        self.session, self.edge_length = session, None
         self.model_list, self.protein = {}, {}
+        self.session, self.edge_length = session, None
+        self.all_edge_lengths, self.chain_elements = [], []
+        self.tetrahedron_model, self.massing_model = Model('Tetrahedrons', self.session), Model("Massing", self.session)
 
         for model in self.session.models.list():
             try:
@@ -176,7 +177,7 @@ class Tetra:
                     self.protein[chain.chain_id] = self.chain_elements
                     self.chain_elements = []
 
-    def grow(self, ms, unit):
+    def grow(self, ms, unit, alpha):
 
         mesh = alphashape.alphashape(ms, alpha * 0.1)
         inside = lambda ms: trimesh.proximity.ProximityQuery(ms).signed_distance
@@ -205,7 +206,7 @@ class Tetra:
 
             for p in combine:
                 pt1, pt2, pt3, pt4 = [np.array(x) for x in p]
-                p1, p2, p3, p4 = (pt1 + pt2) / 2, pt4 + (pt2 - pt1) / 2, p1 + (pt4 - pt3), pt4 + (pt1 - pt2) / 2
+                p1, p2, p3, p4 = (pt1 + pt2) / 2, pt4 + (pt2 - pt1) / 2, (pt1 + pt2) / 2 + (pt4 - pt3), pt4 + (pt1 - pt2) / 2
                 centroid = (p1 + p2 + p3 + p4) / 4
 
                 t = tuple((round(centroid[0], 1), round(centroid[1], 1), round(centroid[2], 1)))
@@ -244,10 +245,9 @@ class Tetra:
             t3_a, t3_b = convert_to_tpl(pt34_a, pt34_b)
             t4_a, t4_b = convert_to_tpl(pt13_a, pt13_b)
             t5_a, t5_b = convert_to_tpl(pt24_a, pt24_b)
-            t6_a, t6_b = convert_to_tpl(pt14_a, p14_b)
+            t6_a, t6_b = convert_to_tpl(pt14_a, pt14_b)
 
-            condition = t1_a in visited or t2_a in visited or t3_a in visited or t4_a in visited or t5_a in visited or t6_a in visited or 
-                        t1_b in visited or t2_b in visited or t3_b in visited or t4_b in visited or t5_b in visited or t6_b in visited
+            condition = any([x in visited for x in [t1_a, t2_a, t3_a, t4_a, t5_a, t6_a, t1_b, t2_b, t3_b, t4_b, t5_b, t6_b]])
 
             if not condition and (inside(mesh)((centroid,)) > -0.8 * unit):
                 x += 1
@@ -257,49 +257,53 @@ class Tetra:
 
         return np.array(massing_coords), np.array(faces[:len(massing_coords) * 4], np.int32)
 
-    def tetrahedron(self, sequence=False, chains=False):
+    def tetrahedron(self, sequence=False, chains=False, in_sequence=True):
         def add_to_sub_model(va, ta, cid):
             sub_model = Model("Chain " + cid, self.session)
             va = np.reshape(va, (va.shape[0] * va.shape[1], va.shape[2]))
             ta = np.array(ta, np.int32)
 
             sub_model.set_geometry(va, calculate_vertex_normals(va, ta), ta)
-            tetrahedron_model.add([sub_model])
+            self.tetrahedron_model.add([sub_model])
 
-        tetrahedron_model = Model('Tetrahedrons', self.session)
         self.iterate_aminos()
         self.iterate_aminos(execute=True)
 
         if sequence:
-            for chain in self.protein.values():
-                va, ta, x = [], [], 0
-                for am in chain:
-                    in_seq = False
-                    for seq in sequence:
-                        if len(seq) < 1 or len(seq) > 2:
-                            print("INVALID SEQUENCE !")
-                            return
-                        else if (len(seq) == 1 and seq[0] <= am.obj.number) or (seq[0] <= am.obj.number and am.obj.number < seq[1]):
-                            in_seq = True
+            for (ch_id, chain) in self.protein.items():
+                if not (ch_id in sequence.keys() or in_sequence):
+                    va, ta, x = [], [], 0
+                    for am in chain:
+                        ta.extend([[12*x, 12*x+3, 12*x+6], [12*x+1, 12*x+7, 12*x+9], [12*x+2, 12*x+4, 12*x+10], [12*x+5, 12*x+8, 12*x+11]])
+                        va.append(am.model_coords)
+                        x += 1
 
-                        if in_seq:
-                            ta.extend([[12*x, 12*x + 3, 12*x + 6], [12*x + 1, 12*x + 7, 12*x + 9], [12*x + 2, 12*x + 4, 12*x + 10], [12*x + 5, 12*x + 8, 12*x + 11]])
-                            va.append(am.model_coords)
-                            x += 1
-                            break
+                    va = np.array(va, np.float32)
+                    if 0 not in va.shape:
+                        add_to_sub_model(va, ta, ch_id)
+
+            for (ids, seq_lst) in sequence.items():
+                va, ta, x = [], [], 0
+                for am in self.protein[ids]:
+                    cond = any([seq[0] <= am.obj.number and am.obj.number < seq[1] for seq in seq_lst])
+
+                    if (in_sequence and cond) or not (in_sequence or cond):
+                        ta.extend([[12*x, 12*x + 3, 12*x + 6], [12*x + 1, 12*x + 7, 12*x + 9], [12*x + 2, 12*x + 4, 12*x + 10], [12*x + 5, 12*x + 8, 12*x + 11]])
+                        va.append(am.model_coords)
+                        x += 1
 
                 va = np.array(va, np.float32)
                 if 0 not in va.shape:
-                    add_to_sub_model(va, ta, chain[0].obj.chain_id)
+                    add_to_sub_model(va, ta, ids)
 
         else:
             if not chains:
-                chains = []
-                for model in self.model_list.values():
-                    for ch in model.chains:
-                        chains.append(ch.chain_id)
+                chains = self.protein.keys()
 
-            for ids in chains:
+            for ids in self.protein.keys():
+                if ids not in chains and in_sequence or ids in chains and not in_sequence:
+                    continue
+
                 va, ta = np.array([am.model_coords for am in self.protein[ids]], np.float32), []
                 for x in range(len(self.protein[ids])):
                     ta.extend([[12*x, 12*x + 3, 12*x + 6], [12*x + 1, 12*x + 7, 12*x + 9], [12*x + 2, 12*x + 4, 12*x + 10], [12*x + 5, 12*x + 8, 12*x + 11]])
@@ -307,57 +311,49 @@ class Tetra:
                 if 0 not in va.shape:
                     add_to_sub_model(va, ta, ids)
 
-        self.session.models.add([tetrahedron_model])
+        self.session.models.add([self.tetrahedron_model])
 
     def massing(self, sequence=False, chains=False, unit=1, alpha=2):
 
         def add_to_sub_model(ms, mass_id):
-            massing_coords, faces = self.grow(ms, unit)
+            massing_coords, faces = self.grow(ms, unit, alpha)
             if not np.all(massing_coords.shape):
-                continue
+                return
 
+            sub_model = Model("Chain " + str(mass_id), self.session)
             massing_coords = np.reshape(massing_coords, (massing_coords.shape[0] * massing_coords.shape[1], massing_coords.shape[2]))
-
-            sub_model = Model("Chain " + mass_id, self.session)
-            sub_model.set_geometry(massing_vertices, calculate_vertex_normals(massing_vertices, faces), faces)
+            sub_model.set_geometry(massing_coords, calculate_vertex_normals(massing_coords, faces), faces)
             self.massing_model.add([sub_model])
-            mass_id = chr(ord(mass_id) + 1)
 
-        mass_id = "A"
-        self.massing_model = Model("Massing", self.session)
-
+        mass_id = 1
         if sequence:
-            tetra_seq = []
-            for i in range(len(sequence)):
-                if i == 0 and sequence[0][0] != 0:
-                    tetra_seq.append((0, sequence[0][0]))
-                else if i == len(sequence) - 1 and sequence[-1][1] != self.protein[-1][-1].number + 1:
-                    tetra_seq.append((sequence[-1][1], self.protein[-1][-1].number + 1))
+            self.tetrahedron(sequence=sequence, in_sequence=False)
+            for (ch_id, chain) in self.protein.items():
+                for (ids, seq_lst) in sequence.items():
+                    if ids != ch_id:
+                        continue
 
-            self.tetrahedron(sequence=tetra_seq)
+                    for seq in seq_lst:
+                        ms = []
+                        for am in chain:
+                            if seq[0] <= am.obj.number and am.obj.number < seq[1]:
+                                ms.extend(am.coords)
 
-            for seq in sequence:
-                for chain in self.protein.values():
-                    ms = []
-                    for am in chain:
-                        if seq[0] <= am.obj.number and am.obj.number < seq[1]:
-                            ms.extend(am.coords)
-
-                    add_to_sub_model(ms, mass_id)
+                        if ms:
+                            add_to_sub_model(ms, mass_id)
+                            mass_id += 1
 
         else:
-            chain_ids = []
-            for ids in self.protein.keys():
-                if ids not in chains:
-                    chain_ids.append(ids)
+            if chains:
+                self.tetrahedron(chains=chains, in_sequence=False)
+                for ids in chains:
+                    ms = [v for x in self.protein[ids] for v in x.coords]
+                    add_to_sub_model(ms, mass_id)
+                    mass_id += 1
+            else:
+                self.tetrahedron()
 
-            self.tetrahedron(chains=chain_ids)
-
-            for chain in self.protein.values():
-                ms = [v for v in x.coords for x in chain]
-                add_to_sub_model(ms, mass_id)
-
-        self.session.models.add([massing_model])
+        self.session.models.add([self.massing_model])
 
 
 # def tetrahedral_model(session, chains=False):
