@@ -10,6 +10,8 @@ from chimerax.core.commands import ListOf, SetOf, TupleOf, Or, RepeatOf, BoolArg
 ht3 = 0.81649658092772603273242802490196379732198249355222337614423086
 ht2 = 0.86602540378443864676372317075293618347140262690519031402790349
 
+
+# Class to represent all the required properties of newly created amino objects from pdb data.
 # TODO: Validate the RMSD calculation methods
 class Amino:
     def __init__(self, coords, obj):
@@ -20,6 +22,7 @@ class Amino:
         self.obj, self.coords = obj, coords
 
     @property
+    # To get model coordinates of amino acid in new tetrahedron model
     def model_coords(self):
         return self._model_coords
     
@@ -28,6 +31,7 @@ class Amino:
         self._model_coords = coords
 
     @property
+    # To get the rmsd of newly created residue tetrahedron c_alpha form original c_alpha pdb coordinates of the same residue
     def rmsd_calpha(self):
         if not self._rmsd_calpha: 
             self._rmsd_calpha = np.sqrt(((np.linalg.norm(self.obj.atoms[1].coord - self.coords[1])) ** 2).mean())
@@ -39,6 +43,7 @@ class Amino:
         self._rmsd_calpha = val
 
     @property
+    # To get the rmsd of newly created residue tetrahedron form original pdb coordinates of the same residue
     def rmsd(self):
         if not self._rmsd:
             og_coords = [self.obj.atoms[x].coord for x in [0, 1, 2]]
@@ -57,6 +62,7 @@ class Amino:
         self._rmsd = val
 
     @property
+    # To get the averaged edge-length for current residue if we forms a tetraheron directly from original coordinates
     def e_len_og(self):
         if not self._e_len_og:
             og_coords = [self.obj.atoms[x].coord for x in [0, 1]]
@@ -76,6 +82,7 @@ class Amino:
         self._e_len_og = val
 
     @property
+    # To get the averaged edge-length for current residue if we forms a tetraheron directly from modified coordinates
     def e_len(self):
         if not self._e_len:
             x = itertools.combinations(self.coords[:1] + self.coords[2:], 2)
@@ -91,11 +98,16 @@ class Tetra:
 
     def __init__(self, session):
 
+        # model_list will store all the model objects in current session, protein stores all the chain_elements
         self.model_list, self.protein = {}, {}
+        # session will store the current session and edge_length will be the final edge size we use for tetrahedrons
         self.session, self.edge_length = session, None
+        # all_edge_lengths will store edge lengths for all residues and chain_elements will store all the Amino objects in current chain
         self.all_edge_lengths, self.chain_elements = [], []
+        # Custom created models of tetrahedron model and massing_model
         self.tetrahedron_model, self.massing_model = Model('Tetrahedrons', self.session), Model("Massing", self.session)
 
+        # Populating the model_list. The pseudo-models are rejcted.
         for model in self.session.models.list():
             try:
                 model.chains
@@ -104,25 +116,31 @@ class Tetra:
             else:
                 self.model_list[model.id] = model
 
+    # Function that will average out all the N-CO distances for each aminos after they have been moved to represent the mid-points of a peptide bonds
+    # This averaged out values will be stored in edge_length and used as unit edge length for our uniform tetrahedrons in model.
     def regularize_egde_length(self, chain, res_index):
 
         mid_N_point = chain.residues[res_index].atoms[0].coord
         mid_CO_point = chain.residues[res_index].atoms[2].coord
 
+        # If the amino is not the first or last in chain then move it to represent the mid points in a peptide bond
         if res_index != 0 and chain.residues[res_index - 1] is not None:
             mid_N_point = (mid_N_point + chain.residues[res_index - 1].atoms[2].coord) * 0.5
 
         if res_index != len(chain.residues) - 1 and chain.residues[res_index + 1] is not None:
             mid_CO_point = (mid_CO_point + chain.residues[res_index + 1].atoms[0].coord) * 0.5
 
+        # Average out
         self.all_edge_lengths.append(np.linalg.norm(mid_N_point - mid_CO_point))
         self.edge_length = sum(self.all_edge_lengths) / len(self.all_edge_lengths)
 
+    # Function modifies the original coordiantes to the ones we will use in our tetrahedron model. This process gives a fairly low RMSD but can be improved alot.
     def process_coordinates(self, chain, res_index, is_continuous_chain):
 
         N_coordinate = chain.residues[res_index].atoms[0].coord
         CO_coordinate = chain.residues[res_index].atoms[2].coord
 
+        # If the residue is not the first or last then move the N and CO points to represent the mid point of adjacent peptide bonds.
         if res_index != 0 and chain.residues[res_index - 1]:
             if is_continuous_chain:
                 N_coordinate = self.chain_elements[-1].co
@@ -132,10 +150,13 @@ class Tetra:
         if res_index < len(chain.residues) - 1 and chain.residues[res_index + 1]:
             CO_coordinate = (CO_coordinate + chain.residues[res_index + 1].atoms[0].coord) * 0.5
 
+        # Regualrize the CO-N edge length to the one we calculated in edge_length
         CO_coordinate = N_coordinate - (N_coordinate - CO_coordinate) * self.edge_length / np.linalg.norm(N_coordinate - CO_coordinate)
         CA_coordinate = chain.residues[res_index].atoms[1].coord
         CO_N_vector = N_coordinate - CO_coordinate
 
+        # Find the new CB point in plane of (N, CO, CB) that form a equilateral triangle with N-CO-CB. This will be the base for residue tetrahdron.
+        # If no CB coordinate the choose any random coordinate for CB. This can take CA reference for further improvements to minimize devaitions.
         if len(chain.residues[res_index].atoms) <= 4:
             vector = N_coordinate - CO_coordinate
             move_vertical_CO_CB = np.array([-1 / vector[0], 1 / vector[1], 0])
@@ -148,21 +169,26 @@ class Tetra:
         CB_coordinate = (CO_coordinate + N_coordinate) * 0.5 + move_vertical_CO_CB
 
         # TODO: Check for directionality in cross product
+        # Assume H as a point forming the tetrahedron with N-CO-CB base in direction to CA
         H_direction = np.cross((N_coordinate - CO_coordinate), (CB_coordinate - CO_coordinate))
         H_vector = ht3 * self.edge_length * H_direction / np.linalg.norm(H_direction)
         H_coordinate = (CO_coordinate + CB_coordinate + N_coordinate) / 3 + H_vector
 
+        # Created an Amino object to store in chain_element that further stores in protein for references to current residue
         vertices = [N_coordinate, CO_coordinate, CB_coordinate, H_coordinate, (N_coordinate + CO_coordinate + CB_coordinate + H_coordinate) / 4]
         self.chain_elements.append(Amino(vertices, chain.residues[res_index]))
 
+    # Function that forms an iteration method across all the residues
+    # All the residues will be checked here for calculations
     def iterate_aminos(self, execute=False):
 
         for model in self.model_list.values():
             for chain in model.chains:
+                # To store a flag that weather current amino have an amino behind it in indexing. Used in process_coordinates
                 is_continuous_chain = False
                 for res_index in range(len(chain.residues)):
-
                     residue = chain.residues[res_index]
+                    # Check for amino acids
                     if not residue or residue.polymer_type != residue.PT_AMINO or not residue.find_atom('CA'):
                         is_continuous_chain = False
                         continue
@@ -177,18 +203,22 @@ class Tetra:
                     self.protein[chain.chain_id] = self.chain_elements
                     self.chain_elements = []
 
+    # Function to grow massing over the provided coordinates
     def grow(self, ms, unit, alpha):
 
+        # Created a mesh to define the bounday of all given coordinates
         mesh = alphashape.alphashape(ms, alpha * 0.1)
         inside = lambda ms: trimesh.proximity.ProximityQuery(ms).signed_distance
         el = self.edge_length * unit
 
+        # First massing tetrahedron from given coordiantes. All are indexed systematically
         pt1 = ms[0]
         pt2 = ms[0] + (ms[1] - ms[0]) * el / np.linalg.norm(ms[1] - ms[0])
         pt3 = ms[0] + (ms[2] - ms[0]) * el / np.linalg.norm(ms[2] - ms[0])
         pt4 = ms[0] + (ms[3] - ms[0]) * el / np.linalg.norm(ms[3] - ms[0])
         centroid = (pt1 + pt2 + pt3 + pt4) / 4
 
+        # Created a store to all the calculated massing vertices to grow massing
         massing_coords = [[pt1, pt1, pt1, pt2, pt2, pt2, pt3, pt3, pt3, pt4, pt4, pt4]]
         visited = {tuple((int(centroid[0]), int(centroid[1]), int(centroid[2])))}
         queue = [[tuple(pt1), tuple(pt2), tuple(pt3), tuple(pt4)]]
@@ -201,6 +231,7 @@ class Tetra:
                 raise Exception("DEPTH EXCEEDED: " + len(queue))
             depth -= 1
 
+            # Pull out the last tetrahedron we created to generate adjacent to it to grow in iteration
             prev_tetra = list(queue.pop())
             combine = permutations(prev_tetra)
 
@@ -212,6 +243,7 @@ class Tetra:
                 t = tuple((round(centroid[0], 1), round(centroid[1], 1), round(centroid[2], 1)))
                 is_visited = t in visited
 
+                # Check if this tetrahedron is already generated. Prevents infinite looping.
                 if not is_visited and (inside(mesh)((centroid,)) > -3 * unit):
                     massing_coords.append([p1, p1, p1, p2, p2, p2, p3, p3, p3, p4, p4, p4])
                     faces.extend([[12*tcnt, 12*tcnt + 3, 12*tcnt + 6], [12*tcnt + 1, 12*tcnt + 7, 12*tcnt + 9], [12*tcnt + 2, 12*tcnt + 4, 12*tcnt + 10], [12*tcnt + 5, 12*tcnt + 8, 12*tcnt + 11]])
@@ -222,6 +254,7 @@ class Tetra:
 
         x = 0
         visited = set()
+        # Refine the tetrahedrons as some overlapping may have been created. Remove those overalapping tetrahedrons.
         while x < len(massing_coords):
             p1, p2, p3, p4 = massing_coords[x][0], massing_coords[x][3], massing_coords[x][6], massing_coords[x][9]
             centroid = (p1 + p2 + p3 + p4) / 4
@@ -240,6 +273,8 @@ class Tetra:
             def convert_to_tpl(a, b):
                 return tuple((round(pt12_a[0], 2), round(pt12_a[1], 2), round(pt12_a[2], 2))), tuple((round(pt12_b[0], 2), round(pt12_b[1], 2), round(pt12_b[2], 2)))
 
+            # Points we keep check to define an overlapping. If two of generated tetrahdrons 
+            # share any one of these points will be considered overlapping and the recent one will be deleted.
             t1_a, t1_b = convert_to_tpl(pt12_a, pt12_b)
             t2_a, t2_b = convert_to_tpl(pt23_a, pt23_b)
             t3_a, t3_b = convert_to_tpl(pt34_a, pt34_b)
@@ -248,7 +283,6 @@ class Tetra:
             t6_a, t6_b = convert_to_tpl(pt14_a, pt14_b)
 
             condition = any([x in visited for x in [t1_a, t2_a, t3_a, t4_a, t5_a, t6_a, t1_b, t2_b, t3_b, t4_b, t5_b, t6_b]])
-
             if not condition and (inside(mesh)((centroid,)) > -0.8 * unit):
                 x += 1
                 visited.update([t1_a, t1_b, t2_a, t2_b, t3_a, t3_b, t4_a, t4_b, t5_a, t5_b, t6_a, t6_b])
@@ -257,7 +291,9 @@ class Tetra:
 
         return np.array(massing_coords), np.array(faces[:len(massing_coords) * 4], np.int32)
 
+    # Function to generate the tetrahedron model
     def tetrahedron(self, sequence=False, chains=False, in_sequence=True):
+        # Generate the model via given coordinates
         def add_to_sub_model(va, ta, cid):
             sub_model = Model("Chain " + cid, self.session)
             va = np.reshape(va, (va.shape[0] * va.shape[1], va.shape[2]))
@@ -266,11 +302,18 @@ class Tetra:
             sub_model.set_geometry(va, calculate_vertex_normals(va, ta), ta)
             self.tetrahedron_model.add([sub_model])
 
+        # First do the iterations over all the residues to calculate the 
+        # required unit size tetrahedron and all the required coordinates to form the model.
         self.iterate_aminos()
         self.iterate_aminos(execute=True)
 
+        # If given the sequence information on which residue to transform into tetrahedron model
+        # There are two cases, one where input sequence need to be converted to tetra model and
+        # the other that everything else other than in input sequence to be converted to tetra model.
+        # This will be defined via in_sequence.
         if sequence:
             for (ch_id, chain) in self.protein.items():
+                # In case of in_sequence=False, all the chains not in sequence will be converted to tetra model
                 if not (ch_id in sequence.keys() or in_sequence):
                     va, ta, x = [], [], 0
                     for am in chain:
@@ -287,6 +330,7 @@ class Tetra:
                 for am in self.protein[ids]:
                     cond = any([seq[0] <= am.obj.number and am.obj.number < seq[1] for seq in seq_lst])
 
+                    # Check weather the current residue to be converted to tetra model or not
                     if (in_sequence and cond) or not (in_sequence or cond):
                         ta.extend([[12*x, 12*x + 3, 12*x + 6], [12*x + 1, 12*x + 7, 12*x + 9], [12*x + 2, 12*x + 4, 12*x + 10], [12*x + 5, 12*x + 8, 12*x + 11]])
                         va.append(am.model_coords)
@@ -298,9 +342,11 @@ class Tetra:
 
         else:
             if not chains:
+                # If there is not chains in input then convert everthing in tetra model by-deault.
                 chains = self.protein.keys()
 
             for ids in self.protein.keys():
+                # Check weather current chain needed to converted to tetra model
                 if ids not in chains and in_sequence or ids in chains and not in_sequence:
                     continue
 
@@ -315,6 +361,7 @@ class Tetra:
 
     def massing(self, sequence=False, chains=False, unit=1, alpha=2):
 
+        # Generate the model via given coordinates
         def add_to_sub_model(ms, mass_id):
             massing_coords, faces = self.grow(ms, unit, alpha)
             if not np.all(massing_coords.shape):
@@ -326,7 +373,10 @@ class Tetra:
             self.massing_model.add([sub_model])
 
         mass_id = 1
+        # Generate massing via given sequence
         if sequence:
+            # Input given sequence in tetra model with in_sequence=False. 
+            # This way everything other than massing will be in tetra model.
             self.tetrahedron(sequence=sequence, in_sequence=False)
             for (ch_id, chain) in self.protein.items():
                 for (ids, seq_lst) in sequence.items():
@@ -336,6 +386,7 @@ class Tetra:
                     for seq in seq_lst:
                         ms = []
                         for am in chain:
+                            # Check weather the current residue to be included to massing model or not
                             if seq[0] <= am.obj.number and am.obj.number < seq[1]:
                                 ms.extend(am.coords)
 
@@ -344,18 +395,21 @@ class Tetra:
                             mass_id += 1
 
         else:
+            # If chains are given then convert them into massing model and everthing else into tetra model
             if chains:
                 self.tetrahedron(chains=chains, in_sequence=False)
                 for ids in chains:
                     ms = [v for x in self.protein[ids] for v in x.coords]
                     add_to_sub_model(ms, mass_id)
                     mass_id += 1
+            # If not given chains the convert everything into tetra model by-default.
             else:
                 self.tetrahedron()
 
         self.session.models.add([self.massing_model])
 
 
+## Need to create a commmand input system. Later will be done using UI intergrations.
 # def tetrahedral_model(session, chains=False):
 #     #from Tetra import Tetra
 #     t = Tetra(session)
