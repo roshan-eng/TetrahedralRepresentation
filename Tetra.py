@@ -96,7 +96,7 @@ class Amino:
 
 class Tetra:
 
-    def __init__(self, session):
+    def __init__(self, session, models = None):
 
         # model_list will store all the model objects in current session, protein stores all the chain_elements
         self.model_list, self.protein = {}, {}
@@ -108,7 +108,9 @@ class Tetra:
         self.tetrahedron_model, self.massing_model = Model('Tetrahedrons', self.session), Model("Massing", self.session)
 
         # Populating the model_list. The pseudo-models are rejcted.
-        for model in self.session.models.list():
+        if models is None:
+            models = self.session.models.list()
+        for model in models:
             try:
                 model.chains
             except AttributeError:
@@ -417,24 +419,45 @@ class Tetra:
 #         chains = list(enumerate(chains))
 #     t.tetrahedron(chains=chains)
 
-# def massing_model(session, chains=None, unit=1, alpha=2):
-#     #from Tetra import Tetra
-#     t = Tetra(session)
-#     chain_ids = [c.chain_id for c in chains]
-#     t.massing(chains = chain_ids, unit = unit, alpha = alpha)
+def massing_model(session, residues=None, unit=1, alpha=2):
+    if residues is None:
+        from chimerax.atomic import all_residues
+        residues = all_residues(session)
+    for structure, chain_residue_intervals in residue_intervals(residues):
+        t = Tetra(session, models = [structure])
+        t.massing(sequence = chain_residue_intervals, unit = unit, alpha = alpha)
 
-# def register_command(session):
-#     from chimerax.core.commands import CmdDesc, register, ListOf, SetOf, TupleOf, RepeatOf, BoolArg, IntArg
-#     from chimerax.atomic import UniqueChainsArg
+def residue_intervals(residues):
+    return [(structure, {chain_id:number_intervals(cres.numbers) for s, chain_id, cres in sres.by_chain})
+            for structure, sres in residues.by_structure]
+
+def number_intervals(numbers):            
+    intervals = []
+    start = end = None
+    for num in numbers:
+        if start is None:
+            start = end = num
+        elif num == end+1:
+            end = num
+        else:
+            intervals.append((start,end))
+            start = end = num
+    intervals.append((start,end))
+    return intervals
+    
+def register_command(session):
+    from chimerax.core.commands import CmdDesc, register, FloatArg
+    from chimerax.atomic import ResiduesArg
+
 #     t_desc = CmdDesc(required = [],
 #                      optional=[("chains", UniqueChainsArg)],
 #                      synopsis = 'creates tetrahedral model')
 #     register('tetra', t_desc, tetrahedral_model, logger=session.logger)
 
-#     m_desc = CmdDesc(required = [],
-#                      optional=[("chains", UniqueChainsArg)],
-#                      keyword=[("unit", IntArg), ("alpha", IntArg)],
-#                      synopsis = 'create tetrahedral massing model')
-#     register('massing', m_desc, massing_model, logger=session.logger)
+    m_desc = CmdDesc(required = [],
+                     optional=[("residues", ResiduesArg)],
+                     keyword=[("unit", FloatArg), ("alpha", FloatArg)],
+                     synopsis = 'create tetrahedral massing model')
+    register('massing', m_desc, massing_model, logger=session.logger)
 
-# register_command(session)
+register_command(session)
